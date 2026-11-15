@@ -4,8 +4,9 @@
   "requires": [],
   "optional": [],
   "js": "frontend.js",
+  "css": "style.css",
   "author": "Aouky7",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "homePage": "https://github.com/Aouky7/luker-webdav-backup",
   "auto_update": true
 }
