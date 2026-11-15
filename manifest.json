@@ -1,0 +1,11 @@
+{
+  "display_name": "WebDAV 备份",
+  "loading_order": 100,
+  "requires": [],
+  "optional": [],
+  "js": "frontend.js",
+  "author": "Aouky7",
+  "version": "0.2.0",
+  "homePage": "https://github.com/Aouky7/luker-webdav-backup",
+  "auto_update": true
+}
