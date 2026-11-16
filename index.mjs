@@ -6,14 +6,15 @@ import { pathToFileURL } from 'node:url';
 import { randomUUID } from 'node:crypto';
 import { PassThrough, Transform } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
-import { BACKUP_NAME, PROPERTIES, parseDav, listFiles, inspectSize } from './webdav.mjs';
+import { BACKUP_NAME, PROPERTIES, parseDav, listFiles, inspectSize, ensureDirectory } from './webdav.mjs';
 
 export const info = { id: 'webdav-backup', name: 'WebDAV Backup', description: 'Streaming WebDAV backups with an in-app companion extension' };
-const VERSION = '0.3.0';
+const VERSION = '0.4.0';
 const DEFAULTS = { settings:true, secrets:false, characters:true, chats:true, lorebooks:true, presets:true, assets:true, extensions:true, globalExtensions:false, vectors:false };
 const CATEGORIES = { settings:'设置', secrets:'API 密钥 / 机密', characters:'角色 / 头像 / 背景', chats:'聊天 / 群组', lorebooks:'世界书', presets:'预设 / 界面布局', assets:'素材 / 文件', extensions:'用户扩展', globalExtensions:'全局前端扩展（管理员）', vectors:'向量索引' };
 let host, storageModule;
 let busy = false;
+let directoryTesting = false;
 let status = { phase:'idle' };
 const file = name => path.join(globalThis.DATA_ROOT, name);
 function readJson(name, fallback) {
@@ -36,7 +37,14 @@ function validate(c) {
   try { u = new URL(c.url); } catch { throw new Error('请填写完整的 HTTPS WebDAV 目录地址'); }
   if (u.protocol !== 'https:' || u.username || u.password || u.search || u.hash) throw new Error('地址必须使用 HTTPS，且不能内嵌密码、查询参数或片段');
   if (!u.pathname.endsWith('/')) u.pathname += '/';
-  if (u.hostname.toLowerCase() === 'dav.jianguoyun.com' && /^\/dav\/*$/i.test(u.pathname)) throw new Error('坚果云根目录不能直接上传文件。请先创建专用文件夹，并使用 /dav/文件夹名/ 地址');
+  try {
+    const segments = u.pathname.split('/').filter(Boolean).map(decodeURIComponent);
+    if (segments.some(s => /[\\/\\\\\u0000-\u001f\u007f]/.test(s) || s === '.' || s === '..')) throw new Error();
+  } catch { throw new Error('目录路径包含无效编码、分隔符或控制字符'); }
+  if (u.hostname.toLowerCase() === 'dav.jianguoyun.com') {
+    if (/^\/dav\/*$/i.test(u.pathname)) u.pathname = '/dav/LukerBackup/';
+    if (!u.pathname.startsWith('/dav/')) throw new Error('坚果云目录地址必须位于 /dav/ 下');
+  }
   if (String(c.username || '').includes(':')) throw new Error('用户名不能包含冒号');
   return u;
 }
@@ -58,8 +66,8 @@ function request(c, method, target, body = null, headers = {}, timeout = 1800000
       const code = response.statusCode || 0;
       if (code < 200 || code >= 300) {
         response.resume();
-        const hint = code === 404 ? '（检查目录是否存在；坚果云须使用子目录）' : code === 401 || code === 403 ? '（检查应用密码和目录权限）' : code === 411 ? '（服务不接受未知长度的流式上传）' : '';
-        fail(new Error(method + ' HTTP ' + code + hint)); return;
+        const hint = code === 404 ? '（目标不存在，请检查目录地址）' : code === 401 || code === 403 ? '（检查应用密码和目录权限）' : code === 411 ? '（服务不接受未知长度的流式上传）' : code === 507 ? '（云端空间不足）' : '';
+        fail(Object.assign(new Error(method + ' HTTP ' + code + hint), {statusCode:code})); return;
       }
       const chunks = []; let size = 0;
       response.on('data', chunk => {
@@ -89,7 +97,7 @@ function snapshot() { return {version:VERSION, busy, ...status}; }
 async function backup(user, chosen, c, folder) {
   const name = 'luker-' + new Date().toISOString().replaceAll(':','-').replaceAll('.','-') + '-' + randomUUID() + '.zip';
   const pending = new URL(name + '.partial', folder), final = new URL(name, folder);
-  status = { phase:'uploading', name, destination:folder.href, selection:chosen, bytes:0, started:new Date().toISOString() };
+  status = { phase:'preparing', name, destination:folder.href, selection:chosen, bytes:0, started:new Date().toISOString() };
   persistStatus();
   const source = new PassThrough();
   // Host createBackupArchive expects an Express-like writable response.
@@ -100,6 +108,9 @@ async function backup(user, chosen, c, folder) {
   const forwarding = pipeline(source, meter);
   forwarding.catch(() => {});
   try {
+    const directory = await ensureDirectory(request,c,folder);
+    status.directoryCreated = directory.created;
+    status.phase = 'uploading'; persistStatus();
     const uploading = request(c, 'PUT', pending, meter, {'Content-Type':'application/zip','If-None-Match':'*'});
     uploading.catch(() => source.destroy());
     await Promise.all([
@@ -114,7 +125,8 @@ async function backup(user, chosen, c, folder) {
     status = {...status, phase:'uploaded', ...verification, finished:new Date().toISOString()};
   } catch (e) {
     source.destroy(); meter.destroy();
-    status = {...status, phase:'failed', error:String(e.message || e), note:'失败时远端可能留有 .partial 文件，请勿将其作为有效备份', finished:new Date().toISOString()};
+    const note = status.phase === 'preparing' ? '未上传备份数据；已创建的空目录会保留' : '失败时远端可能留有 .partial 文件，请勿将其作为有效备份';
+    status = {...status, phase:'failed', error:String(e.message || e), note, finished:new Date().toISOString()};
   } finally { busy = false; persistStatus(); }
 }
 
@@ -124,7 +136,7 @@ export async function init(router) {
   if (typeof host.createBackupArchive !== 'function') throw new Error('Unsupported Luker backup API');
   try {
     status = readJson('_webdav-backup-status.json', {phase:'idle'});
-    if (['uploading','renaming','verifying'].includes(status.phase)) {
+    if (['preparing','uploading','renaming','verifying'].includes(status.phase)) {
       status = {...status, phase:'interrupted', error:'上次任务因后端重启中断；远端可能存在未完成文件'}; persistStatus();
     }
   } catch { status = {phase:'idle', warning:'无法读取上次任务记录'}; }
@@ -134,7 +146,7 @@ export async function init(router) {
     next();
   });
   const wrap = fn => async(req,res) => { try { await fn(req,res); } catch (e) { if (!res.headersSent) res.status(400).json({error:String(e.message || e)}); } };
-  router.get('/', (_req,res) => res.type('html').send('<!doctype html><html lang="zh-CN"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>WebDAV 备份</title><body style="font:18px system-ui;padding:24px"><h2>WebDAV 后端已运行</h2><p>0.3.0 使用 Luker 内置扩展面板。请将同一 GitHub 仓库安装为前端扩展，然后在扩展列表中打开 WebDAV 备份。</p><a href="/">返回 Luker</a></body></html>'));
+  router.get('/', (_req,res) => res.type('html').send('<!doctype html><html lang="zh-CN"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>WebDAV 备份</title><body style="font:18px system-ui;padding:24px"><h2>WebDAV 后端已运行</h2><p>0.4.0 使用 Luker 内置扩展面板。请将同一 GitHub 仓库安装为前端扩展，然后在扩展列表中打开 WebDAV 备份。</p><a href="/">返回 Luker</a></body></html>'));
   router.get('/config', wrap((_req,res) => {
     const c = config();
     res.json({version:VERSION,url:c.url || '',username:c.username || '',passwordSet:!!c.password,selection:selection(c.selection),categories:CATEGORIES,storageEngine:storageModule.getStorageEngine().kind});
@@ -159,21 +171,26 @@ export async function init(router) {
     res.json({name,...result});
   }));
   router.post('/config', wrap((req,res) => {
-    if (busy) return res.status(409).json({error:'备份进行中，请完成后再修改配置'});
+    if (busy || directoryTesting) return res.status(409).json({error:'备份或目录检查进行中，请完成后再修改配置'});
     const b = req.body || {}, old = config();
     const c = {...old,url:String(b.url || '').trim(),username:String(b.username || ''),password:String(b.password || old.password || ''),selection:selection(b.selection || old.selection)};
+    const originalUrl = c.url;
     c.url = validate(c).href;
     writeJson('_webdav-backup.json', c);
-    res.json({ok:true,note:'配置已保存；密码不会返回前端'});
+    const adjusted = new URL(c.url).hostname === 'dav.jianguoyun.com' && /^https:\/\/dav\.jianguoyun\.com(?::443)?\/dav\/*$/i.test(originalUrl);
+    res.json({ok:true,url:c.url,note:adjusted ? '配置已保存；坚果云根地址已设为 /dav/LukerBackup/，测试连接或备份时将自动创建目录' : '配置已保存；测试连接或备份时将自动创建缺失目录，密码不会返回前端'});
   }));
   router.post('/test', wrap(async(_req,res) => {
-    const c = config(), target = validate(c);
-    const result = await request(c,'PROPFIND',target,null,{Depth:'0'},60000);
-    if (result.code === 207 && !/HTTP\/\d(?:\.\d)?\s+2\d\d\b/i.test(result.text)) throw new Error('PROPFIND 返回 207，但未确认目录属性成功，请检查路径与权限');
-    res.json({ok:true,note:'目录读取成功。此测试不会上传用户数据，也不证明 PUT/MOVE 写入权限；需真实备份验证。'});
+    if (busy || directoryTesting) return res.status(409).json({error:'备份或目录检查正在进行，请稍后再试'});
+    directoryTesting = true;
+    try {
+      const c = config(), target = validate(c);
+      const result = await ensureDirectory(request,c,target);
+      res.json({ok:true,...result,note:(result.created ? '已自动创建备份目录，连接测试成功。' : '目录已存在，连接测试成功。') + '此测试未上传备份数据；上传与改名权限仍需真实备份验证。'});
+    } finally { directoryTesting = false; }
   }));
   router.post('/backup', wrap((req,res) => {
-    if (busy) return res.status(409).json({error:'已有备份任务运行中'});
+    if (busy || directoryTesting) return res.status(409).json({error:'已有备份或目录检查运行中'});
     const c = config(), folder = validate(c), chosen = selection(req.body?.selection || c.selection);
     if (!Object.values(chosen).some(Boolean)) throw new Error('请至少选择一个备份分类');
     busy = true;
