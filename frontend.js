@@ -1,7 +1,7 @@
 // In-app companion for the WebDAV Backup server plugin (loaded as an ES module).
 const ROOT = '/api/plugins/webdav-backup';
 const ID = 'luker-webdav-panel';
-const VERSION = '0.5.0';
+const VERSION = '0.5.1';
 const LONG_ROUTES = new Set(['/test', '/backups', '/verify']);
 const ctx = () => (globalThis.Luker || globalThis.SillyTavern).getContext();
 let popupQueue = Promise.resolve();
@@ -123,7 +123,7 @@ function mount() {
 <p class="wd-message" data-view="cloudMessage" role="status">尚未读取云端列表</p>
 <div class="wd-cloud-list" data-view="cloudList" role="list" aria-label="云端备份文件"></div>
 </section>
-<details class="wd-notes"><summary>关于此扩展 · 0.5.0</summary><small class="wd-hint">流式上传边生成边上传，不创建本地 ZIP；兼容上传先生成本地 ZIP，再按已知长度上传，需要 0.5.0 后端及足够本地空间。自动创建目录需要 0.4.0 后端。本扩展不提供恢复、删除或下载备份操作；大小一致不代表内容完整或可恢复。</small></details>
+<details class="wd-notes"><summary>关于此扩展 · 0.5.1</summary><small class="wd-hint">流式上传边生成边上传，不创建本地 ZIP；兼容上传先生成本地 ZIP，再按已知长度上传，需要 0.5.1 后端及足够本地空间。自动创建目录需要 0.4.0 后端。本扩展不提供恢复、删除或下载备份操作；大小一致不代表内容完整或可恢复。</small></details>
 </div></div></div>`;
   target.append(panel);
   loadScopedStyle();
@@ -153,13 +153,13 @@ function mount() {
     const warning = $('[data-view="modeWarning"]');
     warning.hidden = stagedSupported && stagingAvailable && !stagingWarning;
     warning.textContent = !stagedSupported
-      ? '当前后端未声明兼容上传能力，已禁用该选项。请更新服务端插件到 0.5.0 并重启 Luker 后重新读取；现有流式上传仍可使用。'
+      ? '当前后端未声明兼容上传能力，已禁用该选项。请更新服务端插件到 0.5.1 并重启 Luker 后重新读取；现有流式上传仍可使用。'
       : (stagingAvailable ? '' : '兼容上传暂不可用；可以改用流式上传。') + (stagingWarning || (!stagingAvailable ? '请检查后端本地暂存目录并重新读取配置。' : ''));
   }
   function readUploadFields() {
     const uploadMode = field('uploadMode').value;
     if (!['stream','staged'].includes(uploadMode)) throw new Error('请选择有效的上传方式');
-    if (uploadMode === 'staged' && !stagedSupported) throw new Error('兼容上传需要 0.5.0 后端，请更新并重启 Luker 后重新读取配置');
+    if (uploadMode === 'staged' && !stagedSupported) throw new Error('兼容上传需要 0.5.1 后端，请更新并重启 Luker 后重新读取配置');
     if (uploadMode === 'staged' && !stagingAvailable) throw new Error('兼容上传暂不可用：' + (stagingWarning || '请检查后端本地暂存目录'));
     const stagingMaxMiB = Number(field('stagingMaxMiB').value);
     if (!Number.isInteger(stagingMaxMiB) || stagingMaxMiB < 64 || stagingMaxMiB > 65536) throw new Error('本地 ZIP 大小上限必须为 64–65536 MiB 的整数');
@@ -392,7 +392,7 @@ function mount() {
         const c = await api('/config'), chosen = c.selection;
         const mode = c.uploadMode || 'stream';
         if (!['stream','staged'].includes(mode)) throw new Error('后端返回了未知上传方式，请更新前后端并重新读取配置');
-        if ((mode === 'staged' || field('uploadMode').value === 'staged') && !supportsStaged(c)) throw new Error('兼容上传需要 0.5.0 后端，请更新并重启 Luker 后重新读取配置');
+        if ((mode === 'staged' || field('uploadMode').value === 'staged') && !supportsStaged(c)) throw new Error('兼容上传需要 0.5.1 后端，请更新并重启 Luker 后重新读取配置');
         if (mode === 'staged' && c.stagingAvailable === false) throw new Error('兼容上传暂不可用：' + (c.stagingWarning || '请检查后端本地暂存目录'));
         if (mode !== field('uploadMode').value || mode === 'staged' && c.stagingMaxMiB !== Number(field('stagingMaxMiB').value)) throw new Error('后端上传配置已变化，请重新读取并确认上传方式');
         const names = Object.keys(chosen).filter(k => chosen[k]).map(k => c.categories[k]);

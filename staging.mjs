@@ -14,8 +14,36 @@ const fail = message => new Error(message);
 // are removed; unknown files, markers or symlinks stop recovery instead.
 export function createStagingManager(dataRoot, {tmpDir = os.tmpdir(), operations = {}} = {}) {
   const io = {...fs, ...operations};
-  const parent = io.realpathSync(tmpDir);
-  const identity = createHash('sha256').update(io.realpathSync(dataRoot)).digest('hex');
+  const dataPath = io.realpathSync(dataRoot);
+  const identity = createHash('sha256').update(dataPath).digest('hex');
+  const fallback = path.join(path.dirname(dataPath), '.luker-webdav-tmp-' + identity);
+  function prepareParent(candidate, create = true) {
+    try {
+      const resolved = io.realpathSync(candidate);
+      const stat = io.statSync(resolved);
+      if (!stat.isDirectory()) throw fail('暂存父路径不是目录');
+      if (resolved === dataPath || resolved.startsWith(dataPath + path.sep)) throw fail('暂存目录不能位于备份数据目录内');
+      io.accessSync(resolved, fs.constants.W_OK | fs.constants.X_OK);
+      return resolved;
+    } catch (e) {
+      if (!create || e.code !== 'ENOENT') throw e;
+      io.mkdirSync(candidate, {recursive:true, mode:0o700});
+      return prepareParent(candidate, false);
+    }
+  }
+  let parent;
+  try {
+    parent = prepareParent(tmpDir);
+  } catch (e) {
+    if (tmpDir !== os.tmpdir()) throw e;
+    // Use an app-writable sibling outside DATA_ROOT; never archive our own ZIP.
+    try { io.mkdirSync(fallback, {mode:0o700}); }
+    catch (error) { if (error.code !== 'EEXIST') throw error; }
+    const stat = io.lstatSync(fallback);
+    if (!stat.isDirectory() || stat.isSymbolicLink() || (stat.mode & 0o077) !== 0 ||
+        (typeof process.getuid === 'function' && stat.uid !== process.getuid())) throw fail('备用暂存目录权限或类型异常');
+    parent = prepareParent(fallback, false);
+  }
   const root = path.join(parent, 'luker-webdav-staging-' + identity);
   const owner = 'luker-webdav-staging-v1:' + identity;
   let blocked = null;
