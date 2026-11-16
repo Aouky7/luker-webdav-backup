@@ -12,7 +12,7 @@
 
 ## 安装与更新
 
-仓库：<https://github.com/Aouky7/luker-webdav-backup>
+仓库：<https://github.com/Aouky7/webdav_luker>
 
 同一仓库分别安装为服务端插件和前端扩展。更新后重启 Luker 后端、重新加载页面，确认两端为 0.5.2。
 
