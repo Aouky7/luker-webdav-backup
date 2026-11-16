@@ -36,8 +36,19 @@
 #luker-webdav-panel .wd-metadata { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 7px 12px; margin: 10px 0 0; font-size: .86em; }
 #luker-webdav-panel .wd-metadata dt { opacity: .7; }
 #luker-webdav-panel .wd-metadata dd { margin: 0; overflow-wrap: anywhere; white-space: pre-wrap; user-select: text; }
+#luker-webdav-panel .wd-task-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 6px; }
+#luker-webdav-panel .wd-cloud-list { display: flex; flex-direction: column; gap: 8px; margin-top: 10px; }
+#luker-webdav-panel .wd-cloud-file { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 4px 10px; min-width: 0; padding: 10px; border: 1px solid var(--SmartThemeBorderColor, #8886); border-radius: 8px; background: color-mix(in srgb, var(--SmartThemeBodyColor, #888) 3%, transparent); }
+#luker-webdav-panel .wd-file-name { min-width: 0; font-weight: 600; overflow-wrap: anywhere; word-break: break-word; }
+#luker-webdav-panel .wd-cloud-file > .wd-caption { min-width: 0; overflow-wrap: anywhere; }
+#luker-webdav-panel .wd-cloud-file > button { grid-column: 2; grid-row: 1 / span 2; align-self: center; }
+#luker-webdav-panel .wd-cloud-file > [data-file-verification] { grid-column: 1 / -1; margin: 4px 0 0; }
+#luker-webdav-panel .wd-cloud-file .wd-verification { font-size: .86em; }
+#luker-webdav-panel [data-view="styleWarning"] { margin: 0; padding: 8px 10px; border-inline-start: 3px solid #c65b52; border-radius: 3px; background: color-mix(in srgb, #c65b52 10%, transparent); font-size: .88em; }
 #luker-webdav-panel [hidden] { display: none !important; }
 @media (max-width: 380px) {
   #luker-webdav-panel .wd-section { padding: 10px; }
   #luker-webdav-panel .wd-categories { grid-template-columns: 1fr; }
+  #luker-webdav-panel .wd-cloud-file { grid-template-columns: minmax(0, 1fr); }
+  #luker-webdav-panel .wd-cloud-file > button { grid-column: 1; grid-row: auto; justify-self: start; }
 }
