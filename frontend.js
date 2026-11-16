@@ -1,9 +1,31 @@
 // In-app companion for the WebDAV Backup server plugin (loaded as an ES module).
 const ROOT = '/api/plugins/webdav-backup';
 const ID = 'luker-webdav-panel';
-const VERSION = '0.3.0';
+const VERSION = '0.4.0';
 const LONG_ROUTES = new Set(['/test', '/backups', '/verify']);
 const ctx = () => (globalThis.Luker || globalThis.SillyTavern).getContext();
+let popupQueue = Promise.resolve();
+function notify(text, tone = 'info', title = 'WebDAV 备份') {
+  const safeText = String(text ?? '').replace(/(https?:\/\/)[^\s/@]+:[^\s/@]+@/gi, '$1[凭据已隐藏]@');
+  const method = ['success', 'warning', 'error', 'info'].includes(tone) ? tone : 'info';
+  try {
+    if (typeof globalThis.toastr?.[method] === 'function') {
+      globalThis.toastr[method](safeText, title, {escapeHtml:true, closeButton:true, timeOut:method === 'error' || method === 'warning' ? 9000 : 4000});
+      return;
+    }
+  } catch { /* Fall back to the host's text popup. */ }
+  popupQueue = popupQueue.catch(() => {}).then(async () => {
+    try {
+      const c = ctx();
+      if (c.callGenericPopup && c.POPUP_TYPE?.TEXT !== undefined) {
+        const content = document.createElement('div'); content.style.whiteSpace = 'pre-wrap'; content.textContent = title + '\n\n' + safeText;
+        await c.callGenericPopup(content, c.POPUP_TYPE.TEXT, '');
+        return;
+      }
+    } catch { /* Older hosts may not expose popups. */ }
+    try { globalThis.alert(title + '\n\n' + safeText); } catch {}
+  });
+}
 const styleUrl = new URL('./style.css', import.meta.url);
 styleUrl.searchParams.set('v', VERSION);
 function loadScopedStyle() {
@@ -69,6 +91,7 @@ function mount() {
 <label class="wd-field">用户名<input class="text_pole" data-field="username" autocomplete="off" autocapitalize="off" spellcheck="false"></label>
 <label class="wd-field">应用密码<input class="text_pole" data-field="password" type="password" autocomplete="new-password" placeholder="留空保留已保存的密码"></label>
 </div>
+<small class="wd-hint wd-directory-hint">测试连接或开始备份时，会自动创建缺失的目标及中间目录；需要可用的 WebDAV 根目录和创建权限。坚果云 /dav/ 根地址保存后会改为 /dav/LukerBackup/。</small>
 <small class="wd-hint" data-view="configState">展开后读取已保存的配置</small>
 <div class="wd-buttons"><button type="button" class="menu_button" data-action="save">保存配置</button><button type="button" class="menu_button" data-action="test">测试连接</button><button type="button" class="menu_button" data-action="reload">重新读取</button></div>
 </section>
@@ -96,7 +119,7 @@ function mount() {
 <p class="wd-message" data-view="cloudMessage" role="status">尚未读取云端列表</p>
 <div class="wd-cloud-list" data-view="cloudList" role="list" aria-label="云端备份文件"></div>
 </section>
-<details class="wd-notes"><summary>关于此扩展 · 0.3.0</summary><small class="wd-hint">直接在后端生成备份流并上传，不创建本地 ZIP。云端列表与大小检查需要 0.3.0 后端。本扩展不提供恢复、删除或下载备份操作；大小一致不代表内容完整或可恢复。</small></details>
+<details class="wd-notes"><summary>关于此扩展 · 0.4.0</summary><small class="wd-hint">直接在后端生成备份流并上传，不创建本地 ZIP。自动创建目录需要 0.4.0 后端。本扩展不提供恢复、删除或下载备份操作；大小一致不代表内容完整或可恢复。</small></details>
 </div></div></div>`;
   target.append(panel);
   loadScopedStyle();
@@ -107,7 +130,36 @@ function mount() {
   };
   const header = $('.inline-drawer-header');
   const isOpen = () => $('.inline-drawer-icon').classList.contains('up');
-  let loaded = false, loading = false, dirty = false, running = false, checking = false, timer;
+  let loaded = false, loading = false, dirty = false, running = false, checking = null, timer;
+  let starting = false, pollingFailed = false;
+  const observedTasks = new Set(), announcedTasks = new Set(), pendingResults = new Map();
+  const activePhases = new Set(['preparing','uploading','renaming','verifying']);
+  const taskKey = s => s.name ? JSON.stringify([s.name, s.destination || '', s.started || '']) : '';
+  function observeStatus(s, startedHere = false) {
+    const key = taskKey(s);
+    running = !!s.busy || activePhases.has(s.phase);
+    if (key && (running || startedHere)) observedTasks.add(key);
+    formatStatus(s);
+    if (!key || !observedTasks.has(key) || announcedTasks.has(key) || !['uploaded','failed','interrupted'].includes(s.phase)) return;
+    if (document.hidden) { pendingResults.set(key, s); return; }
+    announceResult(key, s);
+  }
+  function announceResult(key, s) {
+    pendingResults.delete(key);
+    announcedTasks.add(key); observedTasks.delete(key);
+    if (s.phase !== 'uploaded') {
+      notify(s.error || s.note || '任务已中断，请检查最近任务详情', 'error', s.phase === 'failed' ? '备份失败' : '备份已中断');
+    } else if (s.sizeVerification === 'matched') {
+      notify('备份上传完成，远端大小一致。' + (s.directoryCreated ? '已自动创建备份目录。' : '') + '尚未验证 ZIP 内容或恢复。', 'success', '备份完成');
+    } else {
+      notify(s.verification || '上传已完成，但尚未确认远端大小，请检查任务详情。', 'warning', s.sizeVerification === 'mismatch' ? '备份上传完成 · 大小异常' : '备份上传完成 · 大小待确认');
+    }
+  }
+  function pollingError(error) {
+    message('状态读取失败，备份结果尚未确认：' + error.message, 'error');
+    if (!pollingFailed) notify('暂时无法读取任务状态，不能据此判断备份失败。恢复连接后会继续检查。', 'warning', '状态连接中断');
+    pollingFailed = true;
+  }
   let listing = false, verifying = false, configRevision = 0, latestName = '';
   const sizeText = value => typeof value === 'number' && Number.isFinite(value) && value >= 0 ? value.toLocaleString() + ' 字节（' + (value / 1048576).toFixed(2) + ' MiB）' : '未知';
   const checkLabels = {matched:'大小一致（未验证内容）', mismatch:'大小不一致，请勿依赖此备份', unknown:'大小未知，无法确认', observed:'已读取大小，无发送基准，未验证'};
@@ -164,6 +216,7 @@ function mount() {
       if (result.name !== name || !Object.hasOwn(checkLabels, result.sizeVerification)) throw new Error('后端返回的大小检查结果无效，请更新到 0.3.0 后端并重启 Luker');
       output.textContent = verificationText(result);
       output.dataset.tone = result.sizeVerification === 'mismatch' ? 'warning' : 'info';
+      notify(checkLabels[result.sizeVerification], result.sizeVerification === 'matched' ? 'success' : 'warning', '大小检查完成');
       // Status refresh is optional; a failure must not erase the successful per-file result.
       if (name === latestName) await refreshStatus().catch(e => message('大小检查已返回，但任务状态刷新失败：' + e.message, 'error'));
     } catch (e) {
@@ -179,8 +232,8 @@ function mount() {
   const getSelection = () => Object.fromEntries([...panel.querySelectorAll('[data-category]')].map(el => [el.dataset.category,el.checked]));
   const setSelection = values => panel.querySelectorAll('[data-category]').forEach(el => { el.checked = !!values[el.dataset.category]; });
   function formatStatus(s) {
-    const names = {idle:'空闲',uploading:'打包并上传中',renaming:'远端改名中',verifying:'检查远端文件',uploaded:'上传完成',failed:'失败',interrupted:'已中断'};
-    const tone = ['uploading','renaming','verifying'].includes(s.phase) ? 'active' : ['failed','interrupted'].includes(s.phase) ? 'error' : s.sizeVerification === 'mismatch' || s.verification?.includes('警告') ? 'warning' : 'info';
+    const names = {idle:'空闲',preparing:'检查并准备备份目录',uploading:'打包并上传中',renaming:'远端改名中',verifying:'检查远端文件',uploaded:'上传完成',failed:'失败',interrupted:'已中断'};
+    const tone = activePhases.has(s.phase) ? 'active' : ['failed','interrupted'].includes(s.phase) ? 'error' : s.sizeVerification === 'mismatch' || s.verification?.includes('警告') ? 'warning' : 'info';
     latestName = s.name || '';
     const latestButton = $('[data-action="verify-latest"]');
     latestButton.hidden = s.phase !== 'uploaded' || !latestName;
@@ -193,13 +246,21 @@ function mount() {
   }
   function schedule() {
     clearTimeout(timer);
-    if (running && isOpen() && !document.hidden) timer = setTimeout(() => refreshStatus().catch(e => message(e.message, 'error')), 2500);
+    // Keep watching an observed task when its panel is collapsed, but not in a hidden tab.
+    if (running && !starting && !document.hidden) timer = setTimeout(() => refreshStatus().catch(pollingError), 2500);
   }
-  async function refreshStatus() {
-    if (checking) return;
-    checking = true;
-    try { const s = await api('/status'); running = !!s.busy; formatStatus(s); }
-    finally { checking = false; schedule(); }
+  function refreshStatus() {
+    if (checking) return checking;
+    if (starting) return Promise.resolve(null);
+    checking = (async () => {
+      try {
+        const s = await api('/status');
+        pollingFailed = false;
+        observeStatus(s);
+        return s;
+      } finally { checking = null; schedule(); }
+    })();
+    return checking;
   }
   async function load() {
     if (loading) return;
@@ -225,8 +286,8 @@ function mount() {
   panel.addEventListener('input', () => { dirty = true; message('配置已修改，请保存后再备份'); });
   panel.addEventListener('change', () => { dirty = true; updateSelectionCount(); });
   async function confirmUpload(text) {
-    const context = ctx();
-    if (context.callGenericPopup && context.POPUP_TYPE) {
+    let context; try { context = ctx(); } catch { context = {}; }
+    if (context.callGenericPopup && context.POPUP_TYPE?.CONFIRM !== undefined) {
       const content = document.createElement('div'); content.style.whiteSpace = 'pre-wrap'; content.textContent = text;
       return !!(await context.callGenericPopup(content, context.POPUP_TYPE.CONFIRM, ''));
     }
@@ -237,16 +298,17 @@ function mount() {
     const action = button.dataset.action;
     button.disabled = true;
     try {
+      if (starting && action !== 'status') throw new Error('正在启动备份，请稍后再试');
       if (['save', 'reload'].includes(action) && (listing || verifying)) throw new Error('云端请求正在进行，请完成后再修改或读取配置');
       if (action === 'reload') {
-        if (dirty && !globalThis.confirm('放弃未保存的表单修改，重新读取后端配置？')) return;
-        await load(); return;
+        if (dirty && !await confirmUpload('放弃未保存的表单修改，重新读取后端配置？')) return;
+        await load(); notify('已重新读取保存的配置与最近任务。', 'success', '配置已读取'); return;
       }
-      if (action === 'status') { await refreshStatus(); return; }
+      if (action === 'status') { const s = await refreshStatus(); if (s) notify('已获取最新任务状态：' + (s.phase === 'uploaded' ? '上传完成，请查看校验结果' : s.phase === 'failed' ? '失败，请查看详情' : s.phase === 'idle' ? '空闲' : '请查看最近任务'), 'info', '状态已刷新'); return; }
       if (action === 'list' || action === 'verify' || action === 'verify-latest') {
         if (!loaded) throw new Error('请先点击重新读取配置，确认后端连接成功');
         if (dirty) throw new Error('表单有未保存修改，请先保存配置');
-        if (action === 'list') { await refreshCloud(); return; }
+        if (action === 'list') { await refreshCloud(); notify($('[data-view="cloudMessage"]').textContent, 'success', '云端列表已刷新'); return; }
         const name = action === 'verify-latest' ? latestName : button.dataset.name;
         if (!name) throw new Error('没有可检查的备份文件');
         const output = action === 'verify-latest' ? $('[data-view="latestCheck"]') : button.closest('.wd-cloud-file')?.querySelector('[data-file-verification]');
@@ -259,33 +321,61 @@ function mount() {
       }
       if (action === 'save') {
         const r = await api('/config',{url:field('url').value,username:field('username').value,password:field('password').value,selection:getSelection()});
-        field('password').value = ''; dirty = false; invalidateCloud(); $('[data-view="latestCheck"]').hidden = true; message(r.note || '已保存'); return;
+        if (typeof r.url === 'string') field('url').value = r.url;
+        field('password').value = ''; dirty = false; invalidateCloud(); $('[data-view="latestCheck"]').hidden = true;
+        message(r.note || '已保存'); notify(r.note || '配置已保存', 'success', '保存成功'); return;
       }
       if (dirty) throw new Error('表单有未保存修改，请先保存配置');
-      if (action === 'test') { message('正在测试目录访问…'); const r = await api('/test',{}); message(r.note); return; }
+      if (action === 'test') {
+        message('正在检查目录，缺失时将自动创建…');
+        const r = await api('/test',{});
+        message(r.note || '目录访问成功'); notify(r.note || '目录访问成功', 'success', r.created ? '连接成功 · 目录已创建' : '连接成功'); return;
+      }
       if (action === 'backup') {
         const c = await api('/config'), chosen = c.selection;
         const names = Object.keys(chosen).filter(k => chosen[k]).map(k => c.categories[k]);
-        const text = '确认将当前用户数据上传到：\n' + c.url + '\n\n分类：' + names.join('、') + '\n\n' + (c.storageEngine !== 'fs' ? '数据库模式：导出可能含其他分类与机密。\n' : '') + '请确认已结束生成与编辑。此操作仅新增远端备份，不恢复或覆盖当前聊天。';
+        const text = '确认将当前用户数据上传到：\n' + c.url + '\n\n分类：' + names.join('、') + '\n\n' + (c.storageEngine !== 'fs' ? '数据库模式：导出可能含其他分类与机密。\n' : '') + '请确认已结束生成与编辑。目标目录不存在时将自动创建。此操作仅新增远端备份，不恢复或覆盖当前聊天。';
         if (!await confirmUpload(text)) return;
-        await api('/backup',{selection:chosen}); message('备份任务已启动'); await refreshStatus();
+        // Drain an older status query before accepting a new task snapshot.
+        if (checking) await checking.catch(() => {});
+        starting = true; clearTimeout(timer);
+        let accepted = false;
+        try {
+          const result = await api('/backup',{selection:chosen});
+          accepted = true;
+          message('备份任务已启动'); notify('正在准备目录并上传。完成或异常时会提示，请保持 Luker 后端运行。', 'info', '备份已启动');
+          observeStatus(result, true);
+        } catch (e) {
+          if (accepted) pollingError(e); else throw e;
+        } finally { starting = false; schedule(); }
+        await refreshStatus().catch(pollingError);
       }
-    } catch (e) { message(e.message, 'error'); }
+    } catch (e) {
+      message(e.message, 'error');
+      const titles = {save:'保存配置失败',test:'连接测试失败',reload:'重新读取失败',backup:'备份请求未确认',status:'状态读取失败',list:'云端列表读取失败',verify:'大小检查失败','verify-latest':'大小检查失败'};
+      notify(e.message, 'error', titles[action] || '操作未完成');
+    }
     finally { button.disabled = false; }
   });
   // Luker owns drawer clicks/animation. Observe its icon instead of toggling twice.
   new MutationObserver(() => {
     header.setAttribute('aria-expanded', String(isOpen()));
-    if (!isOpen()) { clearTimeout(timer); return; }
+    if (!isOpen()) { schedule(); return; }
     loadScopedStyle();
-    (loaded ? refreshStatus() : load()).catch(e => message(e.message, 'error'));
+    (loaded ? refreshStatus() : load()).catch(pollingError);
   }).observe($('.inline-drawer-icon'), {attributes:true, attributeFilter:['class']});
   header.addEventListener('keydown', event => {
     if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); header.click(); }
   });
   document.addEventListener('visibilitychange', () => {
     if (document.hidden) clearTimeout(timer);
-    else if (isOpen()) { loadScopedStyle(); (loaded ? refreshStatus() : load()).catch(e => message(e.message, 'error')); }
+    else {
+      for (const [key, result] of pendingResults) announceResult(key, result);
+      if (isOpen() || running) {
+        loadScopedStyle();
+        (loaded ? refreshStatus() : load()).catch(pollingError);
+      }
+    }
   });
 }
 if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', mount, {once:true});

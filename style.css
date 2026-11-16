@@ -36,6 +36,7 @@
 #luker-webdav-panel .wd-metadata { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 7px 12px; margin: 10px 0 0; font-size: .86em; }
 #luker-webdav-panel .wd-metadata dt { opacity: .7; }
 #luker-webdav-panel .wd-metadata dd { margin: 0; overflow-wrap: anywhere; white-space: pre-wrap; user-select: text; }
+#luker-webdav-panel .wd-directory-hint { border-inline-start: 2px solid var(--SmartThemeQuoteColor, #7b9db8); padding-inline-start: 8px; }
 #luker-webdav-panel .wd-task-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 6px; }
 #luker-webdav-panel .wd-cloud-list { display: flex; flex-direction: column; gap: 8px; margin-top: 10px; }
 #luker-webdav-panel .wd-cloud-file { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 4px 10px; min-width: 0; padding: 10px; border: 1px solid var(--SmartThemeBorderColor, #8886); border-radius: 8px; background: color-mix(in srgb, var(--SmartThemeBodyColor, #888) 3%, transparent); }
