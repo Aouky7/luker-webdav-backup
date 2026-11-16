@@ -6,9 +6,10 @@ import { pathToFileURL } from 'node:url';
 import { randomUUID } from 'node:crypto';
 import { PassThrough, Transform } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
+import { BACKUP_NAME, PROPERTIES, parseDav, listFiles, inspectSize } from './webdav.mjs';
 
 export const info = { id: 'webdav-backup', name: 'WebDAV Backup', description: 'Streaming WebDAV backups with an in-app companion extension' };
-const VERSION = '0.2.0';
+const VERSION = '0.3.0';
 const DEFAULTS = { settings:true, secrets:false, characters:true, chats:true, lorebooks:true, presets:true, assets:true, extensions:true, globalExtensions:false, vectors:false };
 const CATEGORIES = { settings:'设置', secrets:'API 密钥 / 机密', characters:'角色 / 头像 / 背景', chats:'聊天 / 群组', lorebooks:'世界书', presets:'预设 / 界面布局', assets:'素材 / 文件', extensions:'用户扩展', globalExtensions:'全局前端扩展（管理员）', vectors:'向量索引' };
 let host, storageModule;
@@ -45,14 +46,14 @@ function request(c, method, target, body = null, headers = {}, timeout = 1800000
     const fail = error => {
       if (settled) return;
       settled = true; clearTimeout(timer);
-      body?.destroy(); req?.destroy(); reject(error);
+      if (body && typeof body.destroy === 'function') body.destroy(); req?.destroy(); reject(error);
     };
     const complete = () => {
       if (!settled && sent && received) { settled = true; clearTimeout(timer); resolve(result); }
     };
     req = https.request(target, {
       method,
-      headers: { Authorization:'Basic ' + Buffer.from((c.username || '') + ':' + (c.password || '')).toString('base64'), ...headers },
+      headers: { Authorization:'Basic ' + Buffer.from((c.username || '') + ':' + (c.password || '')).toString('base64'), ...(typeof body === 'string' ? {'Content-Length':Buffer.byteLength(body)} : {}), ...headers },
     }, response => {
       const code = response.statusCode || 0;
       if (code < 200 || code >= 300) {
@@ -60,17 +61,24 @@ function request(c, method, target, body = null, headers = {}, timeout = 1800000
         const hint = code === 404 ? '（检查目录是否存在；坚果云须使用子目录）' : code === 401 || code === 403 ? '（检查应用密码和目录权限）' : code === 411 ? '（服务不接受未知长度的流式上传）' : '';
         fail(new Error(method + ' HTTP ' + code + hint)); return;
       }
-      let text = '';
-      response.on('data', chunk => { if (text.length < 8192) text += chunk.toString('utf8').slice(0, 8192 - text.length); });
+      const chunks = []; let size = 0;
+      response.on('data', chunk => {
+        size += chunk.length;
+        if (size > 2097152) { response.destroy(); fail(new Error(method + ' 响应超过 2 MiB，无法完整读取目录')); return; }
+        chunks.push(chunk);
+      });
       response.on('error', () => fail(new Error(method + ' 响应读取失败')));
       response.on('aborted', () => fail(new Error(method + ' 响应中断')));
-      response.on('end', () => { result = {code, headers:response.headers, text}; received = true; complete(); });
+      response.on('end', () => { result = {code, headers:response.headers, text:Buffer.concat(chunks).toString('utf8')}; received = true; complete(); });
     });
     req.on('error', e => fail(new Error(method + ' 网络请求失败：' + (e.code || '连接中断'))));
     req.setTimeout(120000, () => fail(new Error(method + ' 连接空闲超时')));
     timer = setTimeout(() => fail(new Error(method + ' 超过任务时限')), timeout);
-    if (body) pipeline(body, req).then(() => { sent = true; complete(); }, () => fail(new Error(method + ' 上传数据流中断')));
-    else req.end();
+    if (body && typeof body.pipe === 'function') {
+      pipeline(body, req).then(() => { sent = true; complete(); }, () => fail(new Error(method + ' 上传数据流中断')));
+    } else if (body) {
+      req.end(body, () => { sent = true; complete(); });
+    } else req.end();
   });
 }
 function persistStatus() {
@@ -101,17 +109,9 @@ async function backup(user, chosen, c, folder) {
     ]);
     status.phase = 'renaming'; persistStatus();
     await request(c, 'MOVE', pending, null, {Destination:final.href, Overwrite:'F'}, 60000);
-    status.phase = 'verifying';
-    let verification = '远端已接受上传及改名；未验证 ZIP 内容或恢复';
-    try {
-      const remote = await request(c, 'HEAD', final, null, {}, 30000);
-      const length = remote.headers['content-length'];
-      if (length !== undefined) {
-        status.remoteBytes = Number(length);
-        verification = Number(length) === status.bytes ? '远端文件大小与发送字节数一致；未验证内容或恢复' : '警告：远端文件大小与发送字节数不同，请勿依赖此备份';
-      }
-    } catch { verification += '；远端大小检查不可用'; }
-    status = {...status, phase:'uploaded', verification, finished:new Date().toISOString()};
+    status.phase = 'verifying'; persistStatus();
+    const verification = await inspectSize(request, c, final, status.bytes);
+    status = {...status, phase:'uploaded', ...verification, finished:new Date().toISOString()};
   } catch (e) {
     source.destroy(); meter.destroy();
     status = {...status, phase:'failed', error:String(e.message || e), note:'失败时远端可能留有 .partial 文件，请勿将其作为有效备份', finished:new Date().toISOString()};
@@ -134,12 +134,30 @@ export async function init(router) {
     next();
   });
   const wrap = fn => async(req,res) => { try { await fn(req,res); } catch (e) { if (!res.headersSent) res.status(400).json({error:String(e.message || e)}); } };
-  router.get('/', (_req,res) => res.type('html').send('<!doctype html><html lang="zh-CN"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>WebDAV 备份</title><body style="font:18px system-ui;padding:24px"><h2>WebDAV 后端已运行</h2><p>0.2.0 使用 Luker 内置扩展面板。请将同一 GitHub 仓库安装为前端扩展，然后在扩展列表中打开 WebDAV 备份。</p><a href="/">返回 Luker</a></body></html>'));
+  router.get('/', (_req,res) => res.type('html').send('<!doctype html><html lang="zh-CN"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>WebDAV 备份</title><body style="font:18px system-ui;padding:24px"><h2>WebDAV 后端已运行</h2><p>0.3.0 使用 Luker 内置扩展面板。请将同一 GitHub 仓库安装为前端扩展，然后在扩展列表中打开 WebDAV 备份。</p><a href="/">返回 Luker</a></body></html>'));
   router.get('/config', wrap((_req,res) => {
     const c = config();
     res.json({version:VERSION,url:c.url || '',username:c.username || '',passwordSet:!!c.password,selection:selection(c.selection),categories:CATEGORIES,storageEngine:storageModule.getStorageEngine().kind});
   }));
   router.get('/status', (_req,res) => res.json(snapshot()));
+  router.get('/backups', wrap(async(_req,res) => {
+    const c = config(), folder = validate(c);
+    const remote = await request(c,'PROPFIND',folder,PROPERTIES,{Depth:'1','Content-Type':'application/xml; charset=utf-8'},60000);
+    const files = listFiles(parseDav(remote.text),folder);
+    res.json({files:files.slice(0,200),limited:files.length > 200});
+  }));
+  router.post('/verify', wrap(async(req,res) => {
+    if (busy) return res.status(409).json({error:'备份进行中，请完成后再复核'});
+    const name = req.body?.name;
+    if (typeof name !== 'string' || !BACKUP_NAME.test(name)) throw new Error('只能复核本插件命名的 ZIP 文件');
+    const c = config(), folder = validate(c);
+    const task = status;
+    const known = task.name === name && task.destination === folder.href && task.phase === 'uploaded';
+    const result = await inspectSize(request,c,new URL(name,folder),known ? task.bytes : null);
+    // A concurrent backup must never have its state replaced by this older query.
+    if (known && status === task && !busy) { status = {...task,...result}; persistStatus(); }
+    res.json({name,...result});
+  }));
   router.post('/config', wrap((req,res) => {
     if (busy) return res.status(409).json({error:'备份进行中，请完成后再修改配置'});
     const b = req.body || {}, old = config();
