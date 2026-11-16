@@ -1,10 +1,31 @@
-// In-app companion for the WebDAV Backup server plugin.
+// In-app companion for the WebDAV Backup server plugin (loaded as an ES module).
 const ROOT = '/api/plugins/webdav-backup';
 const ID = 'luker-webdav-panel';
+const VERSION = '0.3.0';
+const LONG_ROUTES = new Set(['/test', '/backups', '/verify']);
 const ctx = () => (globalThis.Luker || globalThis.SillyTavern).getContext();
+const styleUrl = new URL('./style.css', import.meta.url);
+styleUrl.searchParams.set('v', VERSION);
+function loadScopedStyle() {
+  let link = document.getElementById(ID + '-style');
+  if (link && link.dataset.state !== 'failed') return;
+  link?.remove();
+  link = document.createElement('link');
+  link.id = ID + '-style';
+  link.rel = 'stylesheet';
+  link.href = styleUrl.href;
+  link.dataset.state = 'loading';
+  const showError = failed => {
+    const notice = document.querySelector('#' + ID + ' [data-view="styleWarning"]');
+    if (notice) notice.hidden = !failed;
+  };
+  link.addEventListener('load', () => { link.dataset.state = 'loaded'; showError(false); }, {once:true});
+  link.addEventListener('error', () => { link.dataset.state = 'failed'; showError(true); }, {once:true});
+  document.head.append(link);
+}
 async function api(route, data) {
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), route === '/test' ? 70000 : 20000);
+  const timer = setTimeout(() => controller.abort(), LONG_ROUTES.has(route) ? 70000 : 20000);
   try {
     const tokenResponse = await fetch('/csrf-token', {cache:'no-store',signal:controller.signal});
     if (!tokenResponse.ok) throw new Error('无法取得登录令牌，请重新打开 Luker 或登录');
@@ -16,7 +37,12 @@ async function api(route, data) {
     });
     const text = await response.text();
     let result; try { result = JSON.parse(text); } catch { result = {}; }
-    if (!response.ok) throw new Error(result.error || (response.status === 404 ? '未找到后端插件，请在服务端插件管理安装/更新后重启 Luker' : response.status === 403 ? '当前会话需要管理员权限，请先登录 Luker' : '请求失败：HTTP ' + response.status));
+    if (!response.ok) {
+      if (['/backups', '/verify'].includes(route) && [404, 405, 501].includes(response.status)) {
+        throw new Error('云端列表与大小检查需要 0.3.0 后端，请更新服务端插件并重启 Luker');
+      }
+      throw new Error(result.error || (response.status === 404 ? '未找到后端插件，请在服务端插件管理安装/更新后重启 Luker' : response.status === 403 ? '当前会话需要管理员权限，请先登录 Luker' : '请求失败：HTTP ' + response.status));
+    }
     return result;
   } catch (e) {
     if (e.name === 'AbortError') throw new Error('请求超时，请确认 Luker 后端仍在运行后重试');
@@ -35,6 +61,7 @@ function mount() {
 <b>WebDAV 备份</b><div class="inline-drawer-icon fa-solid fa-circle-chevron-down down" aria-hidden="true"></div>
 </div>
 <div class="inline-drawer-content" id="luker-webdav-content"><div class="wd-body">
+<p data-view="styleWarning" role="status" hidden>样式加载失败，请检查扩展是否包含 style.css 并重新加载页面；重新展开面板会重试。</p>
 <section class="wd-section" aria-label="连接配置">
 <div class="wd-heading"><h4>连接配置</h4><span class="wd-caption">WebDAV 云端备份</span></div>
 <div class="wd-fields">
@@ -56,15 +83,23 @@ function mount() {
 <small class="wd-hint">先结束生成和编辑。上传前会确认目标及分类；ZIP 未加密，请使用私有目录。</small></div>
 <p class="wd-message" data-view="message" role="status">准备就绪</p>
 <section class="wd-section" aria-label="最近任务">
-<div class="wd-heading"><h4>最近任务</h4><button type="button" class="menu_button" data-action="status" aria-label="刷新任务状态">刷新状态</button></div>
+<div class="wd-heading"><h4>最近任务</h4><div class="wd-task-actions"><button type="button" class="menu_button" data-action="verify-latest" hidden>重新检查大小</button><button type="button" class="menu_button" data-action="status" aria-label="刷新任务状态">刷新状态</button></div></div>
 <div class="wd-status-line" role="status"><span class="wd-badge" data-view="phase">尚未查询</span><span class="wd-caption" data-view="bytes"></span></div>
 <p class="wd-verification" data-view="verification" role="status" hidden></p>
+<p class="wd-verification" data-view="latestCheck" role="status" hidden></p>
 <details class="wd-notes"><summary>任务详情</summary><dl class="wd-metadata" data-view="metadata"></dl></details>
 <small class="wd-hint">运行时自动刷新。关闭面板不影响任务，请保持 Luker 后端运行。</small>
 </section>
-<details class="wd-notes"><summary>关于此扩展 · 0.2.1</summary><small class="wd-hint">直接在后端生成备份流并上传，不创建本地 ZIP。兼容 0.2.0 后端。本扩展不提供恢复或删除备份操作；上传完成不代表内容与恢复已验证。</small></details>
+<section class="wd-section" aria-label="云端备份">
+<div class="wd-heading"><h4>云端备份</h4><button type="button" class="menu_button" data-action="list">刷新云端列表</button></div>
+<small class="wd-hint">读取已保存的 WebDAV 目录，仅手动刷新。大小检查不验证 ZIP 内容完整性，也不验证能否恢复。</small>
+<p class="wd-message" data-view="cloudMessage" role="status">尚未读取云端列表</p>
+<div class="wd-cloud-list" data-view="cloudList" role="list" aria-label="云端备份文件"></div>
+</section>
+<details class="wd-notes"><summary>关于此扩展 · 0.3.0</summary><small class="wd-hint">直接在后端生成备份流并上传，不创建本地 ZIP。云端列表与大小检查需要 0.3.0 后端。本扩展不提供恢复、删除或下载备份操作；大小一致不代表内容完整或可恢复。</small></details>
 </div></div></div>`;
   target.append(panel);
+  loadScopedStyle();
   const $ = selector => panel.querySelector(selector);
   const field = name => $('[data-field="' + name + '"]');
   const message = (value, tone = 'info') => {
@@ -73,6 +108,69 @@ function mount() {
   const header = $('.inline-drawer-header');
   const isOpen = () => $('.inline-drawer-icon').classList.contains('up');
   let loaded = false, loading = false, dirty = false, running = false, checking = false, timer;
+  let listing = false, verifying = false, configRevision = 0, latestName = '';
+  const sizeText = value => typeof value === 'number' && Number.isFinite(value) && value >= 0 ? value.toLocaleString() + ' 字节（' + (value / 1048576).toFixed(2) + ' MiB）' : '未知';
+  const checkLabels = {matched:'大小一致（未验证内容）', mismatch:'大小不一致，请勿依赖此备份', unknown:'大小未知，无法确认', observed:'已读取大小，无发送基准，未验证'};
+  const cloudMessage = (text, tone = 'info') => {
+    const el = $('[data-view="cloudMessage"]'); el.textContent = text; el.dataset.tone = tone;
+  };
+  function invalidateCloud() {
+    configRevision++;
+    $('[data-view="cloudList"]').replaceChildren();
+    cloudMessage('配置已读取或保存，请手动刷新云端列表');
+  }
+  function verificationText(result) {
+    return [checkLabels[result.sizeVerification] || checkLabels.unknown,
+      '远端大小：' + sizeText(result.remoteBytes),
+      '发送基准：' + sizeText(result.expectedBytes),
+      result.verificationSource ? '大小来源：' + result.verificationSource : '',
+      result.verification || '大小检查已完成。'].filter(Boolean).join('\n');
+  }
+  async function refreshCloud() {
+    if (listing || verifying) throw new Error('云端请求正在进行，请稍后再试');
+    listing = true;
+    const revision = configRevision;
+    cloudMessage('正在读取云端列表…');
+    $('[data-view="cloudList"]').replaceChildren();
+    try {
+      const result = await api('/backups');
+      if (revision !== configRevision) return;
+      if (!Array.isArray(result.files)) throw new Error('后端未返回云端文件列表，请更新到 0.3.0 后端并重启 Luker');
+      const rows = result.files.filter(file => file && typeof file.name === 'string').map(file => {
+        const row = document.createElement('article'); row.className = 'wd-cloud-file'; row.setAttribute('role', 'listitem');
+        const title = document.createElement('div'); title.className = 'wd-file-name'; title.textContent = file.name;
+        const metadata = document.createElement('div'); metadata.className = 'wd-caption';
+        const date = file.modified ? new Date(file.modified) : null;
+        metadata.textContent = '大小：' + sizeText(file.bytes) + ' · 修改时间：' + (date && Number.isFinite(date.getTime()) ? date.toLocaleString() : '未知');
+        const button = document.createElement('button'); button.type = 'button'; button.className = 'menu_button'; button.dataset.action = 'verify'; button.dataset.name = file.name; button.textContent = '检查大小'; button.setAttribute('aria-label', '检查大小：' + file.name);
+        const details = document.createElement('p'); details.className = 'wd-verification'; details.dataset.fileVerification = ''; details.setAttribute('role', 'status'); details.hidden = true;
+        row.append(title, metadata, button, details); return row;
+      });
+      $('[data-view="cloudList"]').replaceChildren(...rows);
+      cloudMessage((rows.length ? '已读取 ' + rows.length + ' 个备份文件。' : '当前目录未找到备份文件。') + (result.limited ? '列表已截断，仅显示部分文件。' : ''));
+    } catch (e) {
+      if (revision === configRevision) cloudMessage(e.message, 'error');
+      throw e;
+    } finally { listing = false; }
+  }
+  async function verifyFile(name, output) {
+    if (listing || verifying) throw new Error('云端请求正在进行，请稍后再试');
+    verifying = true;
+    const revision = configRevision;
+    output.hidden = false; output.dataset.tone = 'info'; output.textContent = '正在检查远端大小…';
+    try {
+      const result = await api('/verify', {name});
+      if (revision !== configRevision) return;
+      if (result.name !== name || !Object.hasOwn(checkLabels, result.sizeVerification)) throw new Error('后端返回的大小检查结果无效，请更新到 0.3.0 后端并重启 Luker');
+      output.textContent = verificationText(result);
+      output.dataset.tone = result.sizeVerification === 'mismatch' ? 'warning' : 'info';
+      // Status refresh is optional; a failure must not erase the successful per-file result.
+      if (name === latestName) await refreshStatus().catch(e => message('大小检查已返回，但任务状态刷新失败：' + e.message, 'error'));
+    } catch (e) {
+      if (revision === configRevision) { output.textContent = e.message; output.dataset.tone = 'error'; }
+      throw e;
+    } finally { verifying = false; }
+  }
   function updateSelectionCount() {
     const inputs = [...panel.querySelectorAll('[data-category]')];
     $('[data-view="selectionCount"]').textContent = '已选 ' + inputs.filter(el => el.checked).length + ' / ' + inputs.length;
@@ -82,11 +180,14 @@ function mount() {
   const setSelection = values => panel.querySelectorAll('[data-category]').forEach(el => { el.checked = !!values[el.dataset.category]; });
   function formatStatus(s) {
     const names = {idle:'空闲',uploading:'打包并上传中',renaming:'远端改名中',verifying:'检查远端文件',uploaded:'上传完成',failed:'失败',interrupted:'已中断'};
-    const tone = ['uploading','renaming','verifying'].includes(s.phase) ? 'active' : ['failed','interrupted'].includes(s.phase) ? 'error' : s.verification?.includes('警告') ? 'warning' : 'info';
+    const tone = ['uploading','renaming','verifying'].includes(s.phase) ? 'active' : ['failed','interrupted'].includes(s.phase) ? 'error' : s.sizeVerification === 'mismatch' || s.verification?.includes('警告') ? 'warning' : 'info';
+    latestName = s.name || '';
+    const latestButton = $('[data-action="verify-latest"]');
+    latestButton.hidden = s.phase !== 'uploaded' || !latestName;
     const phase = $('[data-view="phase"]'); phase.textContent = names[s.phase] || s.phase || '尚未查询'; phase.dataset.tone = tone;
     $('[data-view="bytes"]').textContent = s.bytes != null ? '已发送 ' + (s.bytes / 1048576).toFixed(2) + ' MiB' : '';
     if (s.phase === 'uploaded' && tone === 'warning') phase.textContent = '上传完成 · 校验异常';
-    const verification = $('[data-view="verification"]'); verification.textContent = [s.verification, s.error, s.note, s.warning].filter(Boolean).join('\n'); verification.hidden = !verification.textContent; verification.dataset.tone = s.verification?.includes('警告') ? 'warning' : tone;
+    const verification = $('[data-view="verification"]'); verification.textContent = [s.sizeVerification ? checkLabels[s.sizeVerification] : '', s.verification, s.error, s.note, s.warning, s.phase === 'uploaded' ? '仅检查大小，未验证 ZIP 内容完整性或能否恢复。' : ''].filter(Boolean).join('\n'); verification.hidden = !verification.textContent; verification.dataset.tone = tone;
     const values = [['后端版本', s.version], ['已发送', s.bytes != null ? s.bytes + ' 字节（不是总进度）' : null], ['远端大小', s.remoteBytes != null ? s.remoteBytes + ' 字节' : null], ['文件', s.name], ['目标', s.destination], ['开始', s.started && new Date(s.started).toLocaleString()], ['结束', s.finished && new Date(s.finished).toLocaleString()]];
     $('[data-view="metadata"]').replaceChildren(...values.filter(([,value]) => value).flatMap(([key,value]) => { const dt = document.createElement('dt'); dt.textContent = key; const dd = document.createElement('dd'); dd.textContent = value; return [dt,dd]; }));
   }
@@ -107,6 +208,8 @@ function mount() {
     const c = await api('/config');
     if (!c.categories) throw new Error('后端仍为旧版，请更新服务端插件并重启 Luker，再点重新读取配置');
     field('url').value = c.url || ''; field('username').value = c.username || ''; field('password').value = '';
+    invalidateCloud();
+    $('[data-view="latestCheck"]').hidden = true;
     const box = $('.wd-categories'); box.replaceChildren();
     for (const [key,name] of Object.entries(c.categories)) {
       const label = document.createElement('label'), input = document.createElement('input');
@@ -134,18 +237,29 @@ function mount() {
     const action = button.dataset.action;
     button.disabled = true;
     try {
+      if (['save', 'reload'].includes(action) && (listing || verifying)) throw new Error('云端请求正在进行，请完成后再修改或读取配置');
       if (action === 'reload') {
         if (dirty && !globalThis.confirm('放弃未保存的表单修改，重新读取后端配置？')) return;
         await load(); return;
       }
       if (action === 'status') { await refreshStatus(); return; }
+      if (action === 'list' || action === 'verify' || action === 'verify-latest') {
+        if (!loaded) throw new Error('请先点击重新读取配置，确认后端连接成功');
+        if (dirty) throw new Error('表单有未保存修改，请先保存配置');
+        if (action === 'list') { await refreshCloud(); return; }
+        const name = action === 'verify-latest' ? latestName : button.dataset.name;
+        if (!name) throw new Error('没有可检查的备份文件');
+        const output = action === 'verify-latest' ? $('[data-view="latestCheck"]') : button.closest('.wd-cloud-file')?.querySelector('[data-file-verification]');
+        if (!output) throw new Error('找不到大小检查结果区域');
+        await verifyFile(name, output); return;
+      }
       if (!loaded) throw new Error('请先点击重新读取配置，确认后端连接成功');
       if (action === 'all' || action === 'defaults') {
         setSelection(action === 'all' ? Object.fromEntries(Object.keys(getSelection()).map(k => [k,true])) : defaults); updateSelectionCount(); dirty = true; message('分类已修改，请保存配置'); return;
       }
       if (action === 'save') {
         const r = await api('/config',{url:field('url').value,username:field('username').value,password:field('password').value,selection:getSelection()});
-        field('password').value = ''; dirty = false; message(r.note || '已保存'); return;
+        field('password').value = ''; dirty = false; invalidateCloud(); $('[data-view="latestCheck"]').hidden = true; message(r.note || '已保存'); return;
       }
       if (dirty) throw new Error('表单有未保存修改，请先保存配置');
       if (action === 'test') { message('正在测试目录访问…'); const r = await api('/test',{}); message(r.note); return; }
@@ -163,6 +277,7 @@ function mount() {
   new MutationObserver(() => {
     header.setAttribute('aria-expanded', String(isOpen()));
     if (!isOpen()) { clearTimeout(timer); return; }
+    loadScopedStyle();
     (loaded ? refreshStatus() : load()).catch(e => message(e.message, 'error'));
   }).observe($('.inline-drawer-icon'), {attributes:true, attributeFilter:['class']});
   header.addEventListener('keydown', event => {
@@ -170,7 +285,7 @@ function mount() {
   });
   document.addEventListener('visibilitychange', () => {
     if (document.hidden) clearTimeout(timer);
-    else if (isOpen()) (loaded ? refreshStatus() : load()).catch(e => message(e.message, 'error'));
+    else if (isOpen()) { loadScopedStyle(); (loaded ? refreshStatus() : load()).catch(e => message(e.message, 'error')); }
   });
 }
 if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', mount, {once:true});
