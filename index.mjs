@@ -1,4 +1,4 @@
-// Luker WebDAV backup backend: direct streaming or bounded private ZIP staging.
+// Luker WebDAV backup backend: stream ZIP output directly to WebDAV.
 import fs from 'node:fs';
 import path from 'node:path';
 import https from 'node:https';
@@ -6,14 +6,13 @@ import { pathToFileURL } from 'node:url';
 import { randomUUID } from 'node:crypto';
 import { PassThrough, Transform } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
-import { createStagingManager, MiB } from './staging.mjs';
 import { BACKUP_NAME, PROPERTIES, parseDav, listFiles, inspectSize, ensureDirectory } from './webdav.mjs';
 
 export const info = { id: 'webdav-backup', name: 'WebDAV Backup', description: 'Streaming WebDAV backups with an in-app companion extension' };
-const VERSION = '0.5.1';
+const VERSION = '0.5.2';
 const DEFAULTS = { settings:true, secrets:false, characters:true, chats:true, lorebooks:true, presets:true, assets:true, extensions:true, globalExtensions:false, vectors:false };
 const CATEGORIES = { settings:'设置', secrets:'API 密钥 / 机密', characters:'角色 / 头像 / 背景', chats:'聊天 / 群组', lorebooks:'世界书', presets:'预设 / 界面布局', assets:'素材 / 文件', extensions:'用户扩展', globalExtensions:'全局前端扩展（管理员）', vectors:'向量索引' };
-let host, storageModule, staging;
+let host, storageModule;
 let busy = false;
 let directoryTesting = false;
 let status = { phase:'idle' };
@@ -28,12 +27,6 @@ function writeJson(name, value) {
   finally { try { fs.unlinkSync(temp); } catch {} }
 }
 const config = () => readJson('_webdav-backup.json', {});
-function uploadSettings(c) {
-  const uploadMode = c.uploadMode === undefined ? 'stream' : c.uploadMode, stagingMaxMiB = c.stagingMaxMiB === undefined ? 1024 : c.stagingMaxMiB;
-  if (!['stream','staged'].includes(uploadMode)) throw new Error('上传模式必须为 stream 或 staged');
-  if (!Number.isInteger(stagingMaxMiB) || stagingMaxMiB < 64 || stagingMaxMiB > 65536) throw new Error('暂存上限必须为 64–65536 MiB 的整数');
-  return {uploadMode,stagingMaxMiB};
-}
 function selection(input) {
   const result = {...DEFAULTS};
   if (input && typeof input === 'object') for (const key of Object.keys(result)) if (typeof input[key] === 'boolean') result[key] = input[key];
@@ -73,7 +66,7 @@ export function request(c, method, target, body = null, headers = {}, timeout = 
       const code = response.statusCode || 0;
       if (code < 200 || code >= 300) {
         response.resume();
-        const hint = code >= 300 && code < 400 ? '（不支持重定向，请填写最终 HTTPS WebDAV 地址）' : code === 404 ? '（目标不存在，请检查目录地址）' : code === 401 || code === 403 ? '（检查应用密码和目录权限）' : code === 411 ? '（服务要求明确文件长度；流式模式请改用兼容模式 staged）' : code === 413 ? '（服务器或代理拒绝此大小的文件，请检查上传大小限制）' : code === 507 ? '（云端空间不足）' : method === 'MOVE' && [405,501].includes(code) ? '（服务不支持 MOVE 改名；.partial 不是有效完成备份）' : '';
+        const hint = code >= 300 && code < 400 ? '（不支持重定向，请填写最终 HTTPS WebDAV 地址）' : code === 404 ? '（目标不存在，请检查目录地址）' : code === 401 || code === 403 ? '（检查应用密码和目录权限）' : code === 411 ? '（服务要求明确文件长度，本插件仅支持未知长度的流式上传）' : code === 413 ? '（服务器或代理拒绝此大小的文件，请检查上传大小限制）' : code === 507 ? '（云端空间不足）' : method === 'MOVE' && [405,501].includes(code) ? '（服务不支持 MOVE 改名；.partial 不是有效完成备份）' : '';
         fail(Object.assign(new Error(method + ' HTTP ' + code + hint), {statusCode:code})); return;
       }
       const chunks = []; let size = 0;
@@ -102,39 +95,24 @@ function persistStatus() {
 }
 function snapshot() { return {version:VERSION, busy, ...status}; }
 async function backup(user, chosen, c, folder) {
-  const {uploadMode,stagingMaxMiB} = uploadSettings(c);
   const name = 'luker-' + new Date().toISOString().replaceAll(':','-').replaceAll('.','-') + '-' + randomUUID() + '.zip';
   const pending = new URL(name + '.partial', folder), final = new URL(name, folder);
-  status = {phase:'preparing',name,destination:folder.href,selection:chosen,uploadMode,bytes:0,archiveBytes:null,totalBytes:null,started:new Date().toISOString()};
+  status = {phase:'preparing',name,destination:folder.href,selection:chosen,bytes:0,started:new Date().toISOString()};
   persistStatus();
-  let source, meter, task, forwarding;
+  let source, meter, forwarding;
   const produce = stream => host.createBackupArchive(user.profile.handle,stream,chosen,{includeGlobalExtensions:user.profile.admin === true || host.isRequestAdmin({user})});
   try {
     const directory = await ensureDirectory(request,c,folder);
     status.directoryCreated = directory.created;
-    if (uploadMode === 'staged') {
-      status.phase = 'packing'; persistStatus();
-      task = staging.create();
-      const packed = await staging.pack(task,produce,{maxBytes:stagingMaxMiB * MiB,onProgress:bytes => { status.archiveBytes = bytes; }});
-      Object.assign(status,packed);
-      status.phase = 'uploading'; persistStatus();
-      source = fs.createReadStream(task.archive);
-      meter = new Transform({transform(chunk,encoding,done) { status.bytes += chunk.length; done(null,chunk); }});
-      forwarding = pipeline(source,meter); forwarding.catch(() => {});
-      const uploading = request(c,'PUT',pending,meter,{'Content-Type':'application/zip','If-None-Match':'*','Content-Length':status.totalBytes});
-      uploading.catch(() => source.destroy());
-      await Promise.all([uploading,forwarding]);
-    } else {
-      source = new PassThrough();
-      source.attachment = () => source; source.status = () => source;
-      source.send = () => source.destroy(new Error('Luker 归档失败，请查看服务端日志'));
-      meter = new Transform({transform(chunk,encoding,done) { status.bytes += chunk.length; done(null,chunk); }});
-      forwarding = pipeline(source,meter); forwarding.catch(() => {});
-      status.phase = 'uploading'; persistStatus();
-      const uploading = request(c,'PUT',pending,meter,{'Content-Type':'application/zip','If-None-Match':'*'});
-      uploading.catch(() => source.destroy());
-      await Promise.all([uploading,forwarding,Promise.resolve().then(() => produce(source))]);
-    }
+    source = new PassThrough();
+    source.attachment = () => source; source.status = () => source;
+    source.send = () => source.destroy(new Error('Luker 归档失败，请查看服务端日志'));
+    meter = new Transform({transform(chunk,encoding,done) { status.bytes += chunk.length; done(null,chunk); }});
+    forwarding = pipeline(source,meter); forwarding.catch(() => {});
+    status.phase = 'uploading'; persistStatus();
+    const uploading = request(c,'PUT',pending,meter,{'Content-Type':'application/zip','If-None-Match':'*'});
+    uploading.catch(() => source.destroy());
+    await Promise.all([uploading,forwarding,Promise.resolve().then(() => produce(source))]);
     status.phase = 'renaming'; persistStatus();
     await request(c,'MOVE',pending,null,{Destination:final.href,Overwrite:'F'},60000);
     status.phase = 'verifying'; persistStatus();
@@ -147,10 +125,6 @@ async function backup(user, chosen, c, folder) {
     const note = ['preparing','packing'].includes(failureStage) ? '未上传备份数据；已创建的空目录会保留' : failureStage === 'renaming' ? '上传已完成，但改名结果未确认；请检查远端 .partial 和最终 .zip，未核验前请勿依赖此备份' : failureStage === 'verifying' ? '最终 .zip 已完成改名，但核验未完成；请检查云端文件后再使用' : '失败时远端可能留有 .partial 文件，请勿将其作为有效备份';
     status = {...status,phase:'failed',failureStage,error:String(e.message || e),note,finished:new Date().toISOString()};
   } finally {
-    if (task) {
-      try { staging.cleanup(task); }
-      catch (e) { status = {...status,cleanupWarning:String(e.message || e)}; }
-    }
     busy = false; persistStatus();
   }
 }
@@ -159,8 +133,6 @@ export async function init(router) {
   host = await import(pathToFileURL(path.join(process.cwd(), 'src/users.js')).href);
   storageModule = await import(pathToFileURL(path.join(process.cwd(), 'src/storage/index.js')).href);
   if (typeof host.createBackupArchive !== 'function') throw new Error('Unsupported Luker backup API');
-  try { staging = createStagingManager(globalThis.DATA_ROOT); await staging.recover(); }
-  catch (e) { staging = {warning:'暂存初始化失败，兼容模式不可用：' + e.message}; }
   try {
     status = readJson('_webdav-backup-status.json', {phase:'idle'});
     if (['preparing','packing','uploading','renaming','verifying'].includes(status.phase)) {
@@ -175,10 +147,10 @@ export async function init(router) {
     next();
   });
   const wrap = fn => async(req,res) => { try { await fn(req,res); } catch (e) { if (!res.headersSent) res.status(400).json({error:String(e.message || e)}); } };
-  router.get('/', (_req,res) => res.type('html').send('<!doctype html><html lang="zh-CN"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>WebDAV 备份</title><body style="font:18px system-ui;padding:24px"><h2>WebDAV 后端已运行</h2><p>0.5.1 使用 Luker 内置扩展面板。请将同一 GitHub 仓库安装为前端扩展，然后在扩展列表中打开 WebDAV 备份。</p><a href="/">返回 Luker</a></body></html>'));
+  router.get('/', (_req,res) => res.type('html').send('<!doctype html><html lang="zh-CN"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>WebDAV 备份</title><body style="font:18px system-ui;padding:24px"><h2>WebDAV 后端已运行</h2><p>0.5.2 使用 Luker 内置扩展面板。请将同一 GitHub 仓库安装为前端扩展，然后在扩展列表中打开 WebDAV 备份。</p><a href="/">返回 Luker</a></body></html>'));
   router.get('/config', wrap((_req,res) => {
     const c = config();
-    res.json({version:VERSION,...uploadSettings(c),supportedUploadModes:['stream','staged'],stagingAvailable:!staging.warning,stagingWarning:staging.warning || null,url:c.url || '',username:c.username || '',passwordSet:!!c.password,selection:selection(c.selection),categories:CATEGORIES,storageEngine:storageModule.getStorageEngine().kind});
+    res.json({version:VERSION,uploadMode:'stream',supportedUploadModes:['stream'],url:c.url || '',username:c.username || '',passwordSet:!!c.password,selection:selection(c.selection),categories:CATEGORIES,storageEngine:storageModule.getStorageEngine().kind});
   }));
   router.get('/status', (_req,res) => res.json(snapshot()));
   router.get('/backups', wrap(async(_req,res) => {
@@ -203,12 +175,12 @@ export async function init(router) {
     if (busy || directoryTesting) return res.status(409).json({error:'备份或目录检查进行中，请完成后再修改配置'});
     const b = req.body || {}, old = config();
     const c = {...old,url:String(b.url || '').trim(),username:String(b.username || ''),password:String(b.password || old.password || ''),selection:selection(b.selection || old.selection)};
-    Object.assign(c,uploadSettings({uploadMode:Object.hasOwn(b,'uploadMode') ? b.uploadMode : old.uploadMode,stagingMaxMiB:Object.hasOwn(b,'stagingMaxMiB') ? b.stagingMaxMiB : old.stagingMaxMiB}));
+    delete c.uploadMode; delete c.stagingMaxMiB;
     const originalUrl = c.url;
     c.url = validate(c).href;
     writeJson('_webdav-backup.json', c);
     const adjusted = new URL(c.url).hostname === 'dav.jianguoyun.com' && /^https:\/\/dav\.jianguoyun\.com(?::443)?\/dav\/*$/i.test(originalUrl);
-    res.json({ok:true,url:c.url,...uploadSettings(c),note:adjusted ? '配置已保存；坚果云根地址已设为 /dav/LukerBackup/，测试连接或备份时将自动创建目录' : '配置已保存；测试连接或备份时将自动创建缺失目录，密码不会返回前端'});
+    res.json({ok:true,url:c.url,uploadMode:'stream',note:adjusted ? '配置已保存；坚果云根地址已设为 /dav/LukerBackup/，测试连接或备份时将自动创建目录' : '配置已保存；测试连接或备份时将自动创建缺失目录，密码不会返回前端'});
   }));
   router.post('/test', wrap(async(_req,res) => {
     if (busy || directoryTesting) return res.status(409).json({error:'备份或目录检查正在进行，请稍后再试'});
@@ -222,8 +194,6 @@ export async function init(router) {
   router.post('/backup', wrap((req,res) => {
     if (busy || directoryTesting) return res.status(409).json({error:'已有备份或目录检查运行中'});
     const c = config(), folder = validate(c), chosen = selection(req.body?.selection || c.selection);
-    const mode = uploadSettings(c).uploadMode;
-    if (mode === 'staged' && staging.warning) return res.status(409).json({error:staging.warning});
     if (!Object.values(chosen).some(Boolean)) throw new Error('请至少选择一个备份分类');
     busy = true;
     backup(req.user, chosen, c, folder).catch(() => { busy = false; status = {phase:'failed',error:'备份初始化失败'}; persistStatus(); });

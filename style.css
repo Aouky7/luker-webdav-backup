@@ -1,4 +1,4 @@
-/* WebDAV Backup 0.5.0. Scoped panel; drawer header inherits Luker's theme. */
+/* WebDAV Backup 0.5.2. Scoped panel; drawer header inherits Luker's theme. */
 #luker-webdav-panel { margin: 0; min-width: 0; color: var(--SmartThemeBodyColor, inherit); }
 #luker-webdav-panel *, #luker-webdav-panel *::before, #luker-webdav-panel *::after { box-sizing: border-box; }
 #luker-webdav-panel .wd-body { display: flex; flex-direction: column; gap: 12px; padding: 10px 2px 14px; font-size: .92em; line-height: 1.5; }
@@ -10,14 +10,11 @@
 #luker-webdav-panel .wd-fields { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 220px), 1fr)); gap: 10px; }
 #luker-webdav-panel .wd-field { display: flex; flex-direction: column; gap: 5px; min-width: 0; font-size: .92em; }
 #luker-webdav-panel .wd-wide { grid-column: 1 / -1; }
-#luker-webdav-panel :is(input, select).text_pole { width: 100%; min-width: 0; margin: 0; padding: 9px 10px; border-radius: 7px; font: inherit; }
-#luker-webdav-panel select.text_pole { min-height: 40px; color: var(--SmartThemeBodyColor, inherit); background-color: var(--SmartThemeBlurTintColor, transparent); }
-#luker-webdav-panel .wd-mode-warning { border-inline-start: 2px solid #b28a36; padding-inline-start: 8px; }
-#luker-webdav-panel .wd-field .wd-hint { margin-top: 0; }
+#luker-webdav-panel input.text_pole { width: 100%; min-width: 0; margin: 0; padding: 9px 10px; border-radius: 7px; font: inherit; }
 #luker-webdav-panel .wd-buttons { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
 #luker-webdav-panel .wd-body button { min-height: 36px; max-width: 100%; margin: 0; padding: 7px 10px; border-radius: 7px; font: inherit; font-size: .9em; white-space: normal; gap: 6px; }
 #luker-webdav-panel .wd-body button:disabled { opacity: .5; cursor: wait; }
-#luker-webdav-panel :is(button, input, select, summary, [role="button"]):focus-visible { outline: 2px solid var(--SmartThemeQuoteColor, #7b9db8); outline-offset: 3px; }
+#luker-webdav-panel :is(button, input, summary, [role="button"]):focus-visible { outline: 2px solid var(--SmartThemeQuoteColor, #7b9db8); outline-offset: 3px; }
 #luker-webdav-panel .wd-categories { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 145px), 1fr)); gap: 6px; }
 #luker-webdav-panel .wd-categories label { display: flex; align-items: center; gap: 7px; min-width: 0; min-height: 38px; padding: 7px 8px; border: 1px solid transparent; border-radius: 7px; font-size: .9em; cursor: pointer; overflow-wrap: anywhere; }
 #luker-webdav-panel .wd-categories label:has(input:checked) { border-color: var(--SmartThemeBorderColor, #8886); background: color-mix(in srgb, var(--SmartThemeQuoteColor, #7b9db8) 10%, transparent); }

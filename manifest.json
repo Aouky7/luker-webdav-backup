@@ -6,7 +6,7 @@
   "js": "frontend.js",
   "css": "style.css",
   "author": "Aouky7",
-  "version": "0.5.1",
+  "version": "0.5.2",
   "homePage": "https://github.com/Aouky7/luker-webdav-backup",
   "auto_update": true
 }
