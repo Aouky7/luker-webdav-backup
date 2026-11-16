@@ -89,8 +89,8 @@ async function createHost(t) {
     await routes.get(route)({body,user:{profile:{admin:true,handle:'synthetic'}}},{headersSent:false,status(c){code=c;return this;},json(p){payload=p;},set(){}});
     return {code,payload};
   }
-  async function backup(url,mode) {
-    const saved=await call('POST /config',{...credentials,url,uploadMode:mode,stagingMaxMiB:64});
+  async function backup(url) {
+    const saved=await call('POST /config',{...credentials,url});
     assert.equal(saved.code,200,JSON.stringify(saved.payload));
     const started=await call('POST /backup',{selection:{settings:true}}); assert.equal(started.code,202);
     const deadline=Date.now()+15000;
@@ -103,33 +103,29 @@ async function createHost(t) {
   return {call,backup};
 }
 
-test('real HTTPS: strict length server rejects stream and accepts staged ZIP with exact content', {timeout:30000}, async t=>{
+test('real HTTPS: strict length server rejects stream without replay', {timeout:30000}, async t=>{
   const {server,puts}=fixture();
   await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));
   t.after(()=>new Promise(resolve=>{server.closeAllConnections();server.close(resolve);}));
   const host=await createHost(t);
   const folder=`https://127.0.0.1:${server.address().port}/dav/${encodeURIComponent('测试 空间')}/nested/`;
-  const streamed=await host.backup(folder,'stream');
+  const streamed=await host.backup(folder);
   assert.equal(streamed.phase,'failed'); assert.match(streamed.error,/411/);
   assert.equal(puts.filter(p=>!p.accepted).length,1,'uncertain writes must not be replayed');
-  const staged=await host.backup(folder,'staged');
-  assert.equal(staged.phase,'uploaded',staged.error); assert.equal(staged.sizeVerification,'matched');
-  assert.equal(staged.totalBytes,ZIP.length); assert.equal(staged.bytes,ZIP.length);
-  assert.equal(puts.filter(p=>p.accepted).length,1);
-  const list=await host.call('GET /backups'); assert.equal(list.code,200); assert.equal(list.payload.files.length,1);
-  const received=await get(new URL(staged.name,folder)); assert.equal(digest(received),digest(ZIP));
+  assert.equal(puts.filter(p=>p.accepted).length,0);
+  const list=await host.call('GET /backups'); assert.equal(list.code,200); assert.equal(list.payload.files.length,0);
   assert.equal(server.testFailure,undefined);
 });
 
-test('independent WsgiDAV: both upload modes, nested encoded folders, MOVE, list and download hash', {skip:!process.env.TEST_DAV_URL,timeout:30000}, async t=>{
+test('independent WsgiDAV: repeated streaming uploads, nested encoded folders, MOVE, list and download hash', {skip:!process.env.TEST_DAV_URL,timeout:30000}, async t=>{
   const host=await createHost(t);
   const folder=new URL(encodeURIComponent('独立 服务')+'/nested/',process.env.TEST_DAV_URL).href;
-  for (const mode of ['stream','staged']) {
-    const result=await host.backup(folder,mode);
-    assert.equal(result.phase,'uploaded',`${mode}: ${result.error}`);
+  for (const attempt of [1,2]) {
+    const result=await host.backup(folder);
+    assert.equal(result.phase,'uploaded',`${attempt}: ${result.error}`);
     assert.equal(result.sizeVerification,'matched');
     const received=await get(new URL(result.name,folder));
-    assert.equal(digest(received),digest(ZIP),mode+' archive digest');
+    assert.equal(digest(received),digest(ZIP),attempt+' archive digest');
   }
   const list=await host.call('GET /backups'); assert.equal(list.code,200); assert.equal(list.payload.files.length,2);
   assert.ok(list.payload.files.every(f=>f.bytes===ZIP.length));
