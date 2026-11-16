@@ -18,6 +18,39 @@ function fixture(operations = {}) {
   }};
 }
 
+test('creates a missing temporary parent before enabling staged uploads',async()=>{
+  const f=fixture();
+  try {
+    const missing=path.join(f.base,'not-created-yet');
+    const manager=createStagingManager(f.data,{tmpDir:missing});
+    assert.equal(fs.existsSync(missing),true);
+    assert.equal((await manager.recover()).available,true);
+    const task=manager.create();
+    await manager.pack(task,s=>s.end('synthetic ZIP'),{maxBytes:1024});
+    manager.cleanup(task);
+    for (const code of ['ENOENT','EACCES','EROFS']) {
+      const fallback=createStagingManager(f.data,{operations:{
+        realpathSync(target){
+          if (target===os.tmpdir()) throw Object.assign(Error('unavailable tmp'),{code});
+          return fs.realpathSync(target);
+        },
+        mkdirSync(target,options){
+          if (target===os.tmpdir()) throw Object.assign(Error('read-only tmp'),{code:'EROFS'});
+          return fs.mkdirSync(target,options);
+        }
+      }});
+      assert.equal(path.dirname(path.dirname(fallback.root)),f.base);
+      assert.ok(path.basename(path.dirname(fallback.root)).startsWith('.luker-webdav-tmp-'));
+      assert.ok(!fallback.root.startsWith(f.data + path.sep));
+      assert.equal((await fallback.recover()).available,true);
+      const fallbackTask=fallback.create();
+      await fallback.pack(fallbackTask,s=>s.end('synthetic ZIP'),{maxBytes:1024});
+      assert.equal(fs.readFileSync(fallbackTask.archive,'utf8'),'synthetic ZIP');
+      fallback.cleanup(fallbackTask);
+    }
+    assert.throws(()=>createStagingManager(f.data,{tmpDir:f.data}),/备份数据目录/);
+  } finally {f.close();}
+});
 test('private archive waits for producer and writer; byte accounting and recovery cleanup',async()=>{
   const f = fixture();
   try {

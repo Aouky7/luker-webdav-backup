@@ -81,7 +81,7 @@ test('mode defaults, dirty protection, persisted save/reload and one staged uplo
   const h = harness(t);
   await h.open(true);
   assert.equal(h.notices.length,0,'historical terminal status is silent');
-  assert.equal(h.$('#luker-webdav-panel-style').href,'https://luker.test/scripts/extensions/webdav/style.css?v=0.5.0');
+  assert.equal(h.$('#luker-webdav-panel-style').href,'https://luker.test/scripts/extensions/webdav/style.css?v=0.5.1');
   assert.equal(h.field('uploadMode').value,'stream');
   assert.equal(h.field('stagingMaxMiB').value,'1024');
   assert.equal(h.view('stagingLimit').hidden,true);
@@ -129,7 +129,7 @@ test('old backend keeps stream usable and cannot silently accept staged; capabil
   assert.equal(h.field('stagingMaxMiB').value,'1024');
   assert.equal(h.field('uploadMode').querySelector('[value="staged"]').disabled,true);
   assert.equal(h.view('modeWarning').hidden,false);
-  assert.match(h.view('modeWarning').textContent,/0\.5\.0/);
+  assert.match(h.view('modeWarning').textContent,/0\.5\.1/);
   await h.click('save');
   h.allow = true;
   await h.click('backup');
@@ -140,14 +140,14 @@ test('old backend keeps stream usable and cannot silently accept staged; capabil
   const writes = h.posted('/config').length;
   await h.click('save');
   assert.equal(h.posted('/config').length,writes);
-  assert.match(h.notices.at(-1).text,/0\.5\.0/);
+  assert.match(h.notices.at(-1).text,/0\.5\.1/);
   const fresh = harness(t);
   await fresh.open(true);
   fresh.change('uploadMode','staged');
   delete fresh.config.supportedUploadModes;
   await fresh.click('save');
   assert.equal(fresh.posted('/config').length,0,'capability is rechecked before staged save');
-  assert.match(fresh.notices.at(-1).text,/0\.5\.0/);
+  assert.match(fresh.notices.at(-1).text,/0\.5\.1/);
 });
 
 test('staging availability failure blocks only staged and cleanup warnings are once-only warnings', async t => {
