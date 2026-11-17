@@ -5,11 +5,12 @@ import https from 'node:https';
 import { pathToFileURL } from 'node:url';
 import { randomUUID } from 'node:crypto';
 import { PassThrough, Transform } from 'node:stream';
+import { performance } from 'node:perf_hooks';
 import { pipeline } from 'node:stream/promises';
 import { BACKUP_NAME, PROPERTIES, parseDav, listFiles, inspectSize, ensureDirectory } from './webdav.mjs';
 
 export const info = { id: 'webdav-backup', name: 'WebDAV Backup', description: 'Streaming WebDAV backups with an in-app companion extension' };
-const VERSION = '0.5.2';
+const VERSION = '0.5.3';
 const DEFAULTS = { settings:true, secrets:false, characters:true, chats:true, lorebooks:true, presets:true, assets:true, extensions:true, globalExtensions:false, vectors:false };
 const CATEGORIES = { settings:'设置', secrets:'API 密钥 / 机密', characters:'角色 / 头像 / 背景', chats:'聊天 / 群组', lorebooks:'世界书', presets:'预设 / 界面布局', assets:'素材 / 文件', extensions:'用户扩展', globalExtensions:'全局前端扩展（管理员）', vectors:'向量索引' };
 let host, storageModule;
@@ -50,43 +51,89 @@ function validate(c) {
 }
 export function request(c, method, target, body = null, headers = {}, timeout = 1800000) {
   return new Promise((resolve, reject) => {
-    let settled = false, sent = !body, received = false, result, req, timer;
-    const fail = error => {
+    const started = performance.now();
+    const elapsed = () => Math.max(0, Math.round(performance.now() - started));
+    const knownCodes = new Set(['ECONNRESET','ECONNREFUSED','ECONNABORTED','EPIPE','ETIMEDOUT','ENOTFOUND','EAI_AGAIN','ENETUNREACH','EHOSTUNREACH','ERR_STREAM_PREMATURE_CLOSE','ERR_STREAM_DESTROYED','ERR_STREAM_WRITE_AFTER_END','ABORT_ERR','ERR_TLS_CERT_ALTNAME_INVALID','CERT_HAS_EXPIRED','DEPTH_ZERO_SELF_SIGNED_CERT','UNABLE_TO_VERIFY_LEAF_SIGNATURE']);
+    const codeOf = error => knownCodes.has(error?.code) ? error.code : null;
+    let settled = false, sent = !body, received = false, result, req, timer, counter, responseEnded = false;
+    let bodyBytes = 0, uploadFinishedMs = null, responseStartedMs = null, responseStatus = null, sourceError;
+    const fail = (error, kind, original = error) => {
       if (settled) return;
       settled = true; clearTimeout(timer);
-      if (body && typeof body.destroy === 'function') body.destroy(); req?.destroy(); reject(error);
+      const errorCode = codeOf(original);
+      if (errorCode) error.code = errorCode;
+      error.networkDiagnostic = {
+        method:['PUT','MOVE','PROPFIND','HEAD','GET','MKCOL'].includes(method) ? method : 'OTHER',
+        kind, errorCode, elapsedMs:elapsed(), bodyBytes,
+        uploadFinishedMs, responseStartedMs, responseStatus,
+        reusedSocket:typeof req?.reusedSocket === 'boolean' ? req.reusedSocket : null,
+        idleTimeoutMs:120000, totalTimeoutMs:timeout,
+      };
+      reject(error);
+      if (body && typeof body.destroy === 'function') body.destroy();
+      counter?.destroy(); req?.destroy();
     };
     const complete = () => {
       if (!settled && sent && received) { settled = true; clearTimeout(timer); resolve(result); }
     };
-    req = https.request(target, {
-      method,
-      headers: { Authorization:'Basic ' + Buffer.from((c.username || '') + ':' + (c.password || '')).toString('base64'), ...(typeof body === 'string' ? {'Content-Length':Buffer.byteLength(body)} : {}), ...headers },
-    }, response => {
-      const code = response.statusCode || 0;
-      if (code < 200 || code >= 300) {
-        response.resume();
-        const hint = code >= 300 && code < 400 ? '（不支持重定向，请填写最终 HTTPS WebDAV 地址）' : code === 404 ? '（目标不存在，请检查目录地址）' : code === 401 || code === 403 ? '（检查应用密码和目录权限）' : code === 411 ? '（服务要求明确文件长度，本插件仅支持未知长度的流式上传）' : code === 413 ? '（服务器或代理拒绝此大小的文件，请检查上传大小限制）' : code === 507 ? '（云端空间不足）' : method === 'MOVE' && [405,501].includes(code) ? '（服务不支持 MOVE 改名；.partial 不是有效完成备份）' : '';
-        fail(Object.assign(new Error(method + ' HTTP ' + code + hint), {statusCode:code})); return;
-      }
-      const chunks = []; let size = 0;
-      response.on('data', chunk => {
-        size += chunk.length;
-        if (size > 2097152) { response.destroy(); fail(new Error(method + ' 响应超过 2 MiB，无法完整读取目录')); return; }
-        chunks.push(chunk);
+    const streamFailure = error => {
+      const code = codeOf(error);
+      fail(new Error(method + ' 上传数据流中断' + (code ? '：' + code : '')), code === 'ERR_STREAM_PREMATURE_CLOSE' ? 'premature-close' : 'stream', error);
+    };
+    try {
+      req = https.request(target, {
+        method,
+        headers: { Authorization:'Basic ' + Buffer.from((c.username || '') + ':' + (c.password || '')).toString('base64'), ...(typeof body === 'string' ? {'Content-Length':Buffer.byteLength(body)} : {}), ...headers },
+      }, response => {
+        responseStartedMs = elapsed();
+        const code = response.statusCode || 0;
+        responseStatus = Number.isInteger(code) && code >= 100 && code <= 599 ? code : null;
+        // Install even on rejected HTTP responses: request destruction can emit
+        // a later response error, which must not mask the explicit HTTP status.
+        response.on('error', error => fail(new Error(method + ' 响应读取失败' + (codeOf(error) ? '：' + codeOf(error) : '')), 'response', error));
+        if (code < 200 || code >= 300) {
+          response.resume();
+          const hint = code >= 300 && code < 400 ? '（不支持重定向，请填写最终 HTTPS WebDAV 地址）' : code === 404 ? '（目标不存在，请检查目录地址）' : code === 401 || code === 403 ? '（检查应用密码和目录权限）' : code === 411 ? '（服务要求明确文件长度，本插件仅支持未知长度的流式上传）' : code === 413 ? '（服务器或代理拒绝此大小的文件，请检查上传大小限制）' : code === 507 ? '（云端空间不足）' : method === 'MOVE' && [405,501].includes(code) ? '（服务不支持 MOVE 改名；.partial 不是有效完成备份）' : '';
+          fail(Object.assign(new Error(method + ' HTTP ' + code + hint), {statusCode:code}), 'http'); return;
+        }
+        const chunks = []; let size = 0;
+        response.on('data', chunk => {
+          size += chunk.length;
+          if (size > 2097152) { fail(new Error(method + ' 响应超过 2 MiB，无法完整读取目录'), 'response-limit'); response.destroy(); return; }
+          chunks.push(chunk);
+        });
+        // Node may emit aborted before error(ECONNRESET); let the original error win.
+        response.on('aborted', () => setImmediate(() => fail(new Error(method + ' 响应中断'), 'premature-close')));
+        response.on('close', () => { if (!responseEnded) setImmediate(() => fail(new Error(method + ' 响应提前关闭'), 'premature-close')); });
+        response.on('end', () => { responseEnded = true; result = {code, headers:response.headers, text:Buffer.concat(chunks).toString('utf8')}; received = true; complete(); });
       });
-      response.on('error', () => fail(new Error(method + ' 响应读取失败')));
-      response.on('aborted', () => fail(new Error(method + ' 响应中断')));
-      response.on('end', () => { result = {code, headers:response.headers, text:Buffer.concat(chunks).toString('utf8')}; received = true; complete(); });
-    });
-    req.on('error', e => fail(new Error(method + ' 网络请求失败：' + (e.code || '连接中断'))));
-    req.setTimeout(120000, () => fail(new Error(method + ' 连接空闲超时')));
-    timer = setTimeout(() => fail(new Error(method + ' 超过任务时限')), timeout);
-    if (body && typeof body.pipe === 'function') {
-      pipeline(body, req).then(() => { sent = true; complete(); }, () => fail(new Error(method + ' 上传数据流中断')));
-    } else if (body) {
-      req.end(body, () => { sent = true; complete(); });
-    } else req.end();
+      req.on('error', error => {
+        if (error === sourceError) { streamFailure(error); return; }
+        fail(new Error(method + ' 网络请求失败：' + (codeOf(error) || '连接中断')), 'network', error);
+      });
+      req.on('finish', () => { uploadFinishedMs = elapsed(); });
+      req.on('close', () => { if (!received) setImmediate(() => fail(new Error(method + ' 请求提前关闭'), 'premature-close')); });
+      req.setTimeout(120000, () => fail(new Error(method + ' 连接空闲超时'), 'idle-timeout'));
+      timer = setTimeout(() => fail(new Error(method + ' 超过任务时限'), 'total-timeout'), timeout);
+      if (body && typeof body.pipe === 'function') {
+        // Observe source errors without putting it in flowing mode. The Transform
+        // preserves backpressure; these are application bytes, not TCP acknowledgments.
+        body.once('error', error => { sourceError = error; });
+        counter = new Transform({transform(chunk,encoding,done) {
+          bodyBytes = Math.min(Number.MAX_SAFE_INTEGER, bodyBytes + chunk.length);
+          done(null,chunk);
+        }});
+        pipeline(body, counter, req).then(() => { sent = true; complete(); }, error => {
+          // Request error/HTTP response callbacks retain the strongest evidence.
+          setImmediate(() => streamFailure(error));
+        });
+      } else if (body) {
+        bodyBytes = typeof body === 'string' ? Buffer.byteLength(body) : body.byteLength || 0;
+        req.end(body, () => { sent = true; complete(); });
+      } else req.end();
+    } catch (error) {
+      fail(new Error(method + ' 请求初始化失败' + (codeOf(error) ? '：' + codeOf(error) : '')), 'setup', error);
+    }
   });
 }
 function persistStatus() {
@@ -99,7 +146,7 @@ async function backup(user, chosen, c, folder) {
   const pending = new URL(name + '.partial', folder), final = new URL(name, folder);
   status = {phase:'preparing',name,destination:folder.href,selection:chosen,bytes:0,started:new Date().toISOString()};
   persistStatus();
-  let source, meter, forwarding;
+  let source, meter, forwarding, uploading;
   const produce = stream => host.createBackupArchive(user.profile.handle,stream,chosen,{includeGlobalExtensions:user.profile.admin === true || host.isRequestAdmin({user})});
   try {
     const directory = await ensureDirectory(request,c,folder);
@@ -110,7 +157,7 @@ async function backup(user, chosen, c, folder) {
     meter = new Transform({transform(chunk,encoding,done) { status.bytes += chunk.length; done(null,chunk); }});
     forwarding = pipeline(source,meter); forwarding.catch(() => {});
     status.phase = 'uploading'; persistStatus();
-    const uploading = request(c,'PUT',pending,meter,{'Content-Type':'application/zip','If-None-Match':'*'});
+    uploading = request(c,'PUT',pending,meter,{'Content-Type':'application/zip','If-None-Match':'*'});
     uploading.catch(() => source.destroy());
     await Promise.all([uploading,forwarding,Promise.resolve().then(() => produce(source))]);
     status.phase = 'renaming'; persistStatus();
@@ -120,10 +167,17 @@ async function backup(user, chosen, c, folder) {
     status = {...status,phase:'uploaded',...verification,finished:new Date().toISOString()};
   } catch (e) {
     source?.destroy(); meter?.destroy();
-    if (forwarding) await Promise.allSettled([forwarding]);
+    const outcomes = await Promise.allSettled([forwarding,uploading]);
+    const transportError = outcomes[1].status === 'rejected' ? outcomes[1].reason : null;
+    // Destroying the request also rejects the forwarding pipeline. Prefer the
+    // recorded request failure over that secondary premature-close symptom.
+    if (!e.networkDiagnostic && transportError?.networkDiagnostic &&
+        (transportError.networkDiagnostic.kind === 'http' || transportError.networkDiagnostic.kind === 'network' ||
+         ['ERR_STREAM_PREMATURE_CLOSE','ERR_STREAM_DESTROYED'].includes(e.code))) e = transportError;
+    const networkDiagnostic = e.networkDiagnostic || transportError?.networkDiagnostic;
     const failureStage = status.phase;
     const note = ['preparing','packing'].includes(failureStage) ? '未上传备份数据；已创建的空目录会保留' : failureStage === 'renaming' ? '上传已完成，但改名结果未确认；请检查远端 .partial 和最终 .zip，未核验前请勿依赖此备份' : failureStage === 'verifying' ? '最终 .zip 已完成改名，但核验未完成；请检查云端文件后再使用' : '失败时远端可能留有 .partial 文件，请勿将其作为有效备份';
-    status = {...status,phase:'failed',failureStage,error:String(e.message || e),note,finished:new Date().toISOString()};
+    status = {...status,phase:'failed',failureStage,error:String(e.message || e),...(networkDiagnostic ? {networkDiagnostic} : {}),note,finished:new Date().toISOString()};
   } finally {
     busy = false; persistStatus();
   }
@@ -147,7 +201,7 @@ export async function init(router) {
     next();
   });
   const wrap = fn => async(req,res) => { try { await fn(req,res); } catch (e) { if (!res.headersSent) res.status(400).json({error:String(e.message || e)}); } };
-  router.get('/', (_req,res) => res.type('html').send('<!doctype html><html lang="zh-CN"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>WebDAV 备份</title><body style="font:18px system-ui;padding:24px"><h2>WebDAV 后端已运行</h2><p>0.5.2 使用 Luker 内置扩展面板。请将同一 GitHub 仓库安装为前端扩展，然后在扩展列表中打开 WebDAV 备份。</p><a href="/">返回 Luker</a></body></html>'));
+  router.get('/', (_req,res) => res.type('html').send('<!doctype html><html lang="zh-CN"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>WebDAV 备份</title><body style="font:18px system-ui;padding:24px"><h2>WebDAV 后端已运行</h2><p>0.5.3 使用 Luker 内置扩展面板。请将同一 GitHub 仓库安装为前端扩展，然后在扩展列表中打开 WebDAV 备份。</p><a href="/">返回 Luker</a></body></html>'));
   router.get('/config', wrap((_req,res) => {
     const c = config();
     res.json({version:VERSION,uploadMode:'stream',supportedUploadModes:['stream'],url:c.url || '',username:c.username || '',passwordSet:!!c.password,selection:selection(c.selection),categories:CATEGORIES,storageEngine:storageModule.getStorageEngine().kind});

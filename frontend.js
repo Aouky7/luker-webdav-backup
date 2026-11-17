@@ -1,7 +1,7 @@
 // In-app companion for the WebDAV Backup server plugin (loaded as an ES module).
 const ROOT = '/api/plugins/webdav-backup';
 const ID = 'luker-webdav-panel';
-const VERSION = '0.5.2';
+const VERSION = '0.5.3';
 const LONG_ROUTES = new Set(['/test', '/backups', '/verify']);
 const ctx = () => (globalThis.Luker || globalThis.SillyTavern).getContext();
 let popupQueue = Promise.resolve();
@@ -120,7 +120,7 @@ function mount() {
 <p class="wd-message" data-view="cloudMessage" role="status">尚未读取云端列表</p>
 <div class="wd-cloud-list" data-view="cloudList" role="list" aria-label="云端备份文件"></div>
 </section>
-<details class="wd-notes"><summary>关于此扩展 · 0.5.2</summary><small class="wd-hint">仅使用流式上传，边生成边上传，不创建本地 ZIP。自动创建目录需要 0.4.0 后端。本扩展不提供恢复、删除或下载备份操作；大小一致不代表内容完整或可恢复。</small></details>
+<details class="wd-notes"><summary>关于此扩展 · 0.5.3</summary><small class="wd-hint">仅使用流式上传，边生成边上传，不创建本地 ZIP。自动创建目录需要 0.4.0 后端。本扩展不提供恢复、删除或下载备份操作；大小一致不代表内容完整或可恢复。</small></details>
 </div></div></div>`;
   target.append(panel);
   loadScopedStyle();
@@ -244,6 +244,16 @@ function mount() {
     if (s.phase === 'uploaded' && tone === 'warning') phase.textContent = '上传完成 · 校验异常';
     const verification = $('[data-view="verification"]'); verification.textContent = [s.sizeVerification ? checkLabels[s.sizeVerification] : '', s.verification, s.error, s.note, s.warning, s.phase === 'uploaded' ? '仅检查大小，未验证 ZIP 内容完整性或能否恢复。' : ''].filter(Boolean).join('\n'); verification.hidden = !verification.textContent; verification.dataset.tone = tone;
     const values = [['后端版本', s.version], ['已发送', validBytes(s.bytes) ? s.bytes + ' 字节（交给上传流，不代表远端已校验）' : null], ['远端大小', s.remoteBytes != null ? s.remoteBytes + ' 字节' : null], ['文件', s.name], ['目标', s.destination], ['开始', s.started && new Date(s.started).toLocaleString()], ['结束', s.finished && new Date(s.finished).toLocaleString()]];
+    const diagnostic = s.networkDiagnostic;
+    if (diagnostic && typeof diagnostic === 'object') {
+      const kinds = {network:'网络连接错误','idle-timeout':'连接空闲超时','total-timeout':'请求总时限',stream:'上传数据流错误',response:'响应读取错误',http:'HTTP 拒绝','premature-close':'连接提前关闭','response-limit':'响应超过大小限制',setup:'请求初始化失败'};
+      values.push(['失败请求',diagnostic.method],['连接错误类型',kinds[diagnostic.kind] || diagnostic.kind],['原始错误码',diagnostic.errorCode]);
+      if (validBytes(diagnostic.elapsedMs)) values.push(['请求持续时间',(diagnostic.elapsedMs / 1000).toFixed(1) + ' 秒']);
+      if (validBytes(diagnostic.bodyBytes)) values.push(['交给请求流',diagnostic.bodyBytes + ' 字节（非远端接收确认）']);
+      values.push(['请求体发送完成',validBytes(diagnostic.uploadFinishedMs) ? '是，开始后 ' + (diagnostic.uploadFinishedMs / 1000).toFixed(1) + ' 秒' : '未确认']);
+      values.push(['已收到响应',diagnostic.responseStatus ? 'HTTP ' + diagnostic.responseStatus : '未收到响应头']);
+      if (typeof diagnostic.reusedSocket === 'boolean') values.push(['复用连接',diagnostic.reusedSocket ? '是' : '否']);
+    }
     $('[data-view="metadata"]').replaceChildren(...values.filter(([,value]) => value).flatMap(([key,value]) => { const dt = document.createElement('dt'); dt.textContent = key; const dd = document.createElement('dd'); dd.textContent = value; return [dt,dd]; }));
   }
   function schedule() {
