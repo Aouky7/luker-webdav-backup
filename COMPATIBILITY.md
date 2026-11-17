@@ -1,5 +1,15 @@
 # 兼容与恢复验收记录
 
+## 0.5.4 密码与宿主更新
+
+管理员POST `/api/plugins/webdav-backup/password/reveal`按点击返回真实密码，默认GET配置仍只返回passwordSet，所有插件响应Cache-Control:no-store。前端无日志或通知输出密码；切回隐藏后移除取回的未编辑明文。
+
+宿主接口依据 [Luker edae4ef users-admin.js](https://github.com/funnycups/Luker/blob/edae4ef84adde5a78c443883c224ef5753f81975/src/endpoints/users-admin.js#L592) 与 [extensions.js](https://github.com/funnycups/Luker/blob/edae4ef84adde5a78c443883c224ef5753f81975/src/endpoints/extensions.js#L675)，[server-startup.js](https://github.com/funnycups/Luker/blob/edae4ef84adde5a78c443883c224ef5753f81975/src/server-startup.js#L85)确认管理员前缀 `/api/users`。
+
+联合更新依次调用POST `/api/users/plugins/update`（directory）与POST `/api/extensions/update`（extensionName、global、force:false）。先通过管理员插件列表和扩展discover/version核对来源与安装目录；默认只检查不更新。两步非原子，下载后需手动重启/刷新。仅在插件面板发起的更新受插件锁协调，不能阻止宿主其他管理界面的操作。测试使用合成账号与模拟宿主接口，不宣称用户设备联合更新已实测。
+
+用户反馈0.5.3在Koofr成功上传172,727,804字节，100秒完成，远端大小相同；下载内容比对结果尚未收到。这证明该次大备份上传完成，不代表先前断线原因已定位。
+
 ## 0.5.3 范围
 
 增加脱敏的网络错误证据：原始错误码、请求持续时间、请求体发送完成时间、是否收到响应、交给请求流的字节数与连接复用情况。修复原始请求错误被连带流关闭错误掩盖的情况。保持原有超时、单次PUT和无自动重传，不声称Koofr大文件中断已解决。

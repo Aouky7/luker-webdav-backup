@@ -2,7 +2,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import https from 'node:https';
-import { pathToFileURL } from 'node:url';
+import { pathToFileURL, fileURLToPath } from 'node:url';
 import { randomUUID } from 'node:crypto';
 import { PassThrough, Transform } from 'node:stream';
 import { performance } from 'node:perf_hooks';
@@ -10,12 +10,13 @@ import { pipeline } from 'node:stream/promises';
 import { BACKUP_NAME, PROPERTIES, parseDav, listFiles, inspectSize, ensureDirectory } from './webdav.mjs';
 
 export const info = { id: 'webdav-backup', name: 'WebDAV Backup', description: 'Streaming WebDAV backups with an in-app companion extension' };
-const VERSION = '0.5.3';
+const VERSION = '0.5.4';
 const DEFAULTS = { settings:true, secrets:false, characters:true, chats:true, lorebooks:true, presets:true, assets:true, extensions:true, globalExtensions:false, vectors:false };
 const CATEGORIES = { settings:'设置', secrets:'API 密钥 / 机密', characters:'角色 / 头像 / 背景', chats:'聊天 / 群组', lorebooks:'世界书', presets:'预设 / 界面布局', assets:'素材 / 文件', extensions:'用户扩展', globalExtensions:'全局前端扩展（管理员）', vectors:'向量索引' };
 let host, storageModule;
 let busy = false;
 let directoryTesting = false;
+let updateToken = null;
 let status = { phase:'idle' };
 const file = name => path.join(globalThis.DATA_ROOT, name);
 function readJson(name, fallback) {
@@ -201,10 +202,22 @@ export async function init(router) {
     next();
   });
   const wrap = fn => async(req,res) => { try { await fn(req,res); } catch (e) { if (!res.headersSent) res.status(400).json({error:String(e.message || e)}); } };
-  router.get('/', (_req,res) => res.type('html').send('<!doctype html><html lang="zh-CN"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>WebDAV 备份</title><body style="font:18px system-ui;padding:24px"><h2>WebDAV 后端已运行</h2><p>0.5.3 使用 Luker 内置扩展面板。请将同一 GitHub 仓库安装为前端扩展，然后在扩展列表中打开 WebDAV 备份。</p><a href="/">返回 Luker</a></body></html>'));
+  router.get('/', (_req,res) => res.type('html').send('<!doctype html><html lang="zh-CN"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>WebDAV 备份</title><body style="font:18px system-ui;padding:24px"><h2>WebDAV 后端已运行</h2><p>0.5.4 使用 Luker 内置扩展面板。请将同一 GitHub 仓库安装为前端扩展，然后在扩展列表中打开 WebDAV 备份。</p><a href="/">返回 Luker</a></body></html>'));
+  router.post('/updates/lock', wrap((_req,res) => {
+    if (busy || directoryTesting || updateToken) return res.status(409).json({error:'已有备份、目录检查或更新操作，请完成后再试'});
+    updateToken = randomUUID();
+    res.json({ok:true,token:updateToken});
+  }));
+  router.post('/updates/unlock', wrap((req,res) => {
+    if (!updateToken || req.body?.token !== updateToken) return res.status(409).json({error:'更新锁身份不匹配，请重启后端核实'});
+    updateToken = null; res.json({ok:true});
+  }));
+  router.post('/password/reveal', wrap((_req,res) => {
+    res.json({password:String(config().password || '')});
+  }));
   router.get('/config', wrap((_req,res) => {
     const c = config();
-    res.json({version:VERSION,uploadMode:'stream',supportedUploadModes:['stream'],url:c.url || '',username:c.username || '',passwordSet:!!c.password,selection:selection(c.selection),categories:CATEGORIES,storageEngine:storageModule.getStorageEngine().kind});
+    res.json({version:VERSION,capabilities:{passwordReveal:true,updateLock:true},updatePending:!!updateToken,updateIdentity:{directory:path.basename(path.dirname(fileURLToPath(import.meta.url))),repository:'https://github.com/Aouky7/webdav_luker'},uploadMode:'stream',supportedUploadModes:['stream'],url:c.url || '',username:c.username || '',passwordSet:!!c.password,selection:selection(c.selection),categories:CATEGORIES,storageEngine:storageModule.getStorageEngine().kind});
   }));
   router.get('/status', (_req,res) => res.json(snapshot()));
   router.get('/backups', wrap(async(_req,res) => {
@@ -226,7 +239,7 @@ export async function init(router) {
     res.json({name,...result});
   }));
   router.post('/config', wrap((req,res) => {
-    if (busy || directoryTesting) return res.status(409).json({error:'备份或目录检查进行中，请完成后再修改配置'});
+    if (busy || directoryTesting || updateToken) return res.status(409).json({error:'备份或目录检查进行中，请完成后再修改配置'});
     const b = req.body || {}, old = config();
     const c = {...old,url:String(b.url || '').trim(),username:String(b.username || ''),password:String(b.password || old.password || ''),selection:selection(b.selection || old.selection)};
     delete c.uploadMode; delete c.stagingMaxMiB;
@@ -234,10 +247,10 @@ export async function init(router) {
     c.url = validate(c).href;
     writeJson('_webdav-backup.json', c);
     const adjusted = new URL(c.url).hostname === 'dav.jianguoyun.com' && /^https:\/\/dav\.jianguoyun\.com(?::443)?\/dav\/*$/i.test(originalUrl);
-    res.json({ok:true,url:c.url,uploadMode:'stream',note:adjusted ? '配置已保存；坚果云根地址已设为 /dav/LukerBackup/，测试连接或备份时将自动创建目录' : '配置已保存；测试连接或备份时将自动创建缺失目录，密码不会返回前端'});
+    res.json({ok:true,url:c.url,uploadMode:'stream',note:adjusted ? '配置已保存；坚果云根地址已设为 /dav/LukerBackup/，测试连接或备份时将自动创建目录' : '配置已保存；测试连接或备份时将自动创建缺失目录，密码默认隐藏，仅点击眼睛时读取'});
   }));
   router.post('/test', wrap(async(_req,res) => {
-    if (busy || directoryTesting) return res.status(409).json({error:'备份或目录检查正在进行，请稍后再试'});
+    if (busy || directoryTesting || updateToken) return res.status(409).json({error:'备份或目录检查正在进行，请稍后再试'});
     directoryTesting = true;
     try {
       const c = config(), target = validate(c);
@@ -246,7 +259,7 @@ export async function init(router) {
     } finally { directoryTesting = false; }
   }));
   router.post('/backup', wrap((req,res) => {
-    if (busy || directoryTesting) return res.status(409).json({error:'已有备份或目录检查运行中'});
+    if (busy || directoryTesting || updateToken) return res.status(409).json({error:'已有备份或目录检查运行中'});
     const c = config(), folder = validate(c), chosen = selection(req.body?.selection || c.selection);
     if (!Object.values(chosen).some(Boolean)) throw new Error('请至少选择一个备份分类');
     busy = true;

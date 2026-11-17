@@ -1,7 +1,8 @@
+import {mountUpdates} from './updates.js';
 // In-app companion for the WebDAV Backup server plugin (loaded as an ES module).
 const ROOT = '/api/plugins/webdav-backup';
 const ID = 'luker-webdav-panel';
-const VERSION = '0.5.3';
+const VERSION = '0.5.4';
 const LONG_ROUTES = new Set(['/test', '/backups', '/verify']);
 const ctx = () => (globalThis.Luker || globalThis.SillyTavern).getContext();
 let popupQueue = Promise.resolve();
@@ -72,6 +73,30 @@ async function api(route, data) {
     throw e;
   } finally { clearTimeout(timer); }
 }
+async function hostApi(route, data) {
+  const allowed = new Set(['/api/extensions/discover','/api/extensions/version','/api/extensions/update','/api/users/plugins/list','/api/users/plugins/update']);
+  if (!allowed.has(route)) throw new Error('未授权的宿主更新接口');
+  const mutation = route.endsWith('/update');
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), mutation ? 180000 : 60000);
+  let dispatched = false;
+  try {
+    const tokenResponse = await fetch('/csrf-token',{cache:'no-store',signal:controller.signal});
+    if (!tokenResponse.ok) throw new Error('无法取得登录令牌');
+    const {token} = await tokenResponse.json();
+    dispatched = true;
+    const response = await fetch(route,{method:data === undefined ? 'GET' : 'POST',cache:'no-store',signal:controller.signal,headers:{'Content-Type':'application/json','x-csrf-token':token},body:data === undefined ? undefined : JSON.stringify(data)});
+    if (!response.ok) {
+      const error = new Error('宿主接口 HTTP ' + response.status + (response.status === 409 ? '：本地修改或更新冲突，请在宿主管理中处理；不会强制覆盖。' : response.status === 404 ? '：此版本可能不支持面板更新，请使用宿主管理界面。' : '，请检查宿主管理界面。'));
+      error.confirmedResponse = true; error.uncertain = mutation && response.status >= 500; throw error;
+    }
+    try { return await response.json(); }
+    catch { throw Object.assign(new Error('宿主响应无法解析，更新结果需核实'),{uncertain:mutation}); }
+  } catch (error) {
+    if (error.confirmedResponse) throw error;
+    throw Object.assign(new Error(mutation && dispatched ? '更新请求结果未确认，请在宿主管理中核实；不会自动重试。' : '无法完成宿主版本检查，请稍后重试。'),{uncertain:mutation && dispatched});
+  } finally { clearTimeout(timer); }
+}
 function mount() {
   if (document.getElementById(ID)) return;
   const target = document.querySelector('#extensions_settings') || document.querySelector('#extensions_settings2');
@@ -89,7 +114,7 @@ function mount() {
 <div class="wd-fields">
 <label class="wd-field wd-wide">HTTPS 目录地址<input class="text_pole" data-field="url" type="url" spellcheck="false" autocapitalize="off" placeholder="https://dav.jianguoyun.com/dav/LukerBackup/"></label>
 <label class="wd-field">用户名<input class="text_pole" data-field="username" autocomplete="off" autocapitalize="off" spellcheck="false"></label>
-<label class="wd-field">应用密码<input class="text_pole" data-field="password" type="password" autocomplete="new-password" placeholder="留空保留已保存的密码"></label>
+<div class="wd-field"><label for="luker-webdav-password">应用密码</label><div class="wd-password"><input id="luker-webdav-password" class="text_pole" data-field="password" type="password" autocomplete="new-password" placeholder="留空保留已保存的密码"><button type="button" class="menu_button" data-action="password-eye" aria-label="显示密码" aria-pressed="false" title="显示密码"><i class="fa-solid fa-eye" aria-hidden="true"></i></button></div><small class="wd-hint" data-view="passwordState">尚未读取密码状态</small></div>
 </div>
 <small class="wd-hint">边生成 ZIP 边上传，不保存本地完整 ZIP；服务须支持未知长度的流式上传。</small>
 <small class="wd-hint wd-directory-hint">测试连接或开始备份时，会自动创建缺失的目标及中间目录；需要可用的 WebDAV 根目录和创建权限。坚果云 /dav/ 根地址保存后会改为 /dav/LukerBackup/。</small>
@@ -120,7 +145,7 @@ function mount() {
 <p class="wd-message" data-view="cloudMessage" role="status">尚未读取云端列表</p>
 <div class="wd-cloud-list" data-view="cloudList" role="list" aria-label="云端备份文件"></div>
 </section>
-<details class="wd-notes"><summary>关于此扩展 · 0.5.3</summary><small class="wd-hint">仅使用流式上传，边生成边上传，不创建本地 ZIP。自动创建目录需要 0.4.0 后端。本扩展不提供恢复、删除或下载备份操作；大小一致不代表内容完整或可恢复。</small></details>
+<details class="wd-notes"><summary>关于此扩展 · 0.5.4</summary><small class="wd-hint">仅使用流式上传，边生成边上传，不创建本地 ZIP。自动创建目录需要 0.4.0 后端。本扩展不提供恢复、删除或下载备份操作；大小一致不代表内容完整或可恢复。</small></details>
 </div></div></div>`;
   target.append(panel);
   loadScopedStyle();
@@ -132,7 +157,76 @@ function mount() {
   const header = $('.inline-drawer-header');
   const isOpen = () => $('.inline-drawer-icon').classList.contains('up');
   let loaded = false, loading = false, dirty = false, running = false, checking = null, timer;
-  let starting = false, pollingFailed = false;
+  let starting = false, pollingFailed = false, updateLocked = false, backendVersion = '', updateIdentity = null, updateToken = null;
+  const updater = mountUpdates({panel,version:VERSION,moduleUrl:import.meta.url,api:hostApi,notify,confirm:confirmUpload,
+    getBusy:() => running || starting || loading || listing || verifying || updateLocked,
+    getDirty:() => dirty,
+    onLock:async value => {
+      updateLocked = value;
+      if (value) {
+        concealPassword();
+        try { const lock = await api('/updates/lock',{}); if (!lock.ok || typeof lock.token !== 'string') throw new Error('invalid lock'); updateToken = lock.token; }
+        catch (error) { updateLocked = true; throw Object.assign(new Error('无法确认更新锁状态，请重新读取配置或重启后端后核实。'),{uncertain:true}); }
+      } else {
+        try { await api('/updates/unlock',{token:updateToken}); updateToken = null; }
+        catch { updateLocked = true; message('更新锁释放未确认，请重启后端后再操作。','warning'); }
+      }
+    },
+  });
+  const passwordInput = field('password'), passwordEye = $('[data-action="password-eye"]');
+  const PASSWORD_MASK = '********';
+  let passwordSaved = false, passwordEdited = false, passwordSentinel = false, passwordRevealSupported = false, passwordRevision = 0;
+  function paintPassword() {
+    const visible = passwordInput.type === 'text';
+    passwordEye.setAttribute('aria-label', visible ? '隐藏密码' : '显示密码');
+    passwordEye.setAttribute('aria-pressed', String(visible));
+    passwordEye.title = visible ? '隐藏密码' : '显示密码';
+    passwordEye.querySelector('i').className = 'fa-solid ' + (visible ? 'fa-eye-slash' : 'fa-eye');
+    $('[data-view="passwordState"]').textContent = passwordEdited ? '新密码待保存；留空保留原密码' : passwordSaved ? '已保存；星号仅为遮罩，点击眼睛可查看' : '尚未保存密码';
+  }
+  function concealPassword() {
+    passwordRevision++;
+    passwordInput.type = 'password';
+    if (!passwordEdited) { passwordInput.value = passwordSaved ? PASSWORD_MASK : ''; passwordSentinel = passwordSaved; }
+    paintPassword();
+  }
+  function resetPassword(saved) {
+    passwordSaved = !!saved; passwordEdited = false; concealPassword();
+  }
+  function passwordChanged() {
+    passwordRevision++; passwordSentinel = false; passwordEdited = passwordInput.value.length > 0; paintPassword();
+  }
+  passwordInput.addEventListener('focus', () => {
+    if (passwordSentinel) { passwordInput.value = ''; passwordSentinel = false; }
+  });
+  passwordInput.addEventListener('blur', () => {
+    if (!passwordInput.value && !passwordEdited) concealPassword();
+  });
+  passwordInput.addEventListener('input', passwordChanged);
+  passwordInput.addEventListener('change', passwordChanged);
+  async function togglePassword() {
+    if (!loaded || loading || document.hidden) return;
+    if (passwordInput.type === 'text') { concealPassword(); return; }
+    if (passwordEdited) { passwordInput.type = 'text'; paintPassword(); return; }
+    if (!passwordSaved) return;
+    if (!passwordRevealSupported) {
+      message('查看已保存密码需要新版后端，请更新服务端插件并重启；仍可输入替换密码。', 'warning');
+      return;
+    }
+    const revision = ++passwordRevision;
+    try {
+      const result = await api('/password/reveal', {});
+      if (revision !== passwordRevision || passwordEdited || document.hidden || loading) return;
+      if (typeof result.password !== 'string') throw new Error('invalid password response');
+      passwordInput.value = result.password; passwordSentinel = false; passwordInput.type = 'text'; paintPassword();
+    } catch {
+      if (revision !== passwordRevision || document.hidden) return;
+      concealPassword();
+      // Never reflect server error text: it may accidentally contain credentials.
+      message('无法查看已保存密码，请确认后端已更新且当前为管理员登录。', 'error');
+      notify('无法查看已保存密码，请确认后端已更新且当前为管理员登录。', 'error', '密码查看失败');
+    }
+  }
   const observedTasks = new Set(), announcedTasks = new Set(), pendingResults = new Map();
   const activePhases = new Set(['preparing','uploading','renaming','verifying']);
   const taskKey = s => s.name ? JSON.stringify([s.name, s.destination || '', s.started || '']) : '';
@@ -233,6 +327,7 @@ function mount() {
   const getSelection = () => Object.fromEntries([...panel.querySelectorAll('[data-category]')].map(el => [el.dataset.category,el.checked]));
   const setSelection = values => panel.querySelectorAll('[data-category]').forEach(el => { el.checked = !!values[el.dataset.category]; });
   function formatStatus(s) {
+    updater.setBackendVersion(s.version);
     const names = {idle:'空闲',preparing:'检查并准备备份目录',uploading:'打包并上传中',renaming:'远端改名中',verifying:'检查远端文件',uploaded:'上传完成',failed:'失败',interrupted:'已中断'};
     const tone = activePhases.has(s.phase) ? 'active' : ['failed','interrupted'].includes(s.phase) ? 'error' : s.sizeVerification === 'mismatch' || s.verification?.includes('警告') ? 'warning' : 'info';
     latestName = s.name || '';
@@ -276,11 +371,14 @@ function mount() {
   }
   async function load() {
     if (loading) return;
-    loading = true;
+    concealPassword(); loading = true;
     try {
     const c = await api('/config');
     if (!c.categories) throw new Error('后端仍为旧版，请更新服务端插件并重启 Luker，再点重新读取配置');
-    field('url').value = c.url || ''; field('username').value = c.username || ''; field('password').value = '';
+    field('url').value = c.url || ''; field('username').value = c.username || '';
+    passwordRevealSupported = c.capabilities?.passwordReveal === true; resetPassword(c.passwordSet);
+    backendVersion = c.version; updateIdentity = c.updateIdentity;
+    updateLocked = c.updatePending === true;
     invalidateCloud();
     $('[data-view="latestCheck"]').hidden = true;
     const box = $('.wd-categories'); box.replaceChildren();
@@ -292,8 +390,8 @@ function mount() {
     $('[data-view="configState"]').textContent = '后端 ' + c.version + ' · 存储 ' + c.storageEngine + ' · ' + (c.passwordSet ? '密码已保存，留空不变' : '尚未保存密码');
     $('[data-view="databaseWarning"]').hidden = c.storageEngine === 'fs';
     updateSelectionCount();
-    loaded = true; dirty = false; message('配置已读取'); await refreshStatus();
-    } finally { loading = false; }
+    loaded = true; dirty = false; message(updateLocked ? '更新已下载或结果待核实，请重启后端并重新加载页面。' : '配置已读取'); await refreshStatus();
+    } finally { loading = false; if (loaded) updater.setConfig({version:backendVersion,updateIdentity,updatePending:updateLocked}); }
   }
   panel.addEventListener('input', () => { dirty = true; message('配置已修改，请保存后再备份'); });
   panel.addEventListener('change', () => { dirty = true; updateSelectionCount(); message('配置已修改，请保存后再备份'); });
@@ -310,6 +408,8 @@ function mount() {
     const action = button.dataset.action;
     button.disabled = true;
     try {
+      if (action === 'password-eye') { await togglePassword(); return; }
+      if (updateLocked && !['status','reload'].includes(action)) throw new Error('更新待应用或核实，请重启后端并重新加载页面后再操作');
       if (starting && action !== 'status') throw new Error('正在启动备份，请稍后再试');
       if (['save', 'reload'].includes(action) && (listing || verifying)) throw new Error('云端请求正在进行，请完成后再修改或读取配置');
       if (action === 'reload') {
@@ -332,9 +432,11 @@ function mount() {
         setSelection(action === 'all' ? Object.fromEntries(Object.keys(getSelection()).map(k => [k,true])) : defaults); updateSelectionCount(); dirty = true; message('分类已修改，请保存配置'); return;
       }
       if (action === 'save') {
-        const r = await api('/config',{url:field('url').value,username:field('username').value,password:field('password').value,selection:getSelection()});
+        const savedPassword = passwordSaved || (passwordEdited && !!passwordInput.value);
+        concealPassword();
+        const r = await api('/config',{url:field('url').value,username:field('username').value,password:passwordEdited ? passwordInput.value : '',selection:getSelection()});
         if (typeof r.url === 'string') field('url').value = r.url;
-        field('password').value = ''; dirty = false; invalidateCloud(); $('[data-view="latestCheck"]').hidden = true;
+        resetPassword(savedPassword); dirty = false; invalidateCloud(); $('[data-view="latestCheck"]').hidden = true;
         message(r.note || '已保存'); notify(r.note || '配置已保存', 'success', '保存成功'); return;
       }
       if (dirty) throw new Error('表单有未保存修改，请先保存配置');
@@ -375,7 +477,7 @@ function mount() {
   // Luker owns drawer clicks/animation. Observe its icon instead of toggling twice.
   new MutationObserver(() => {
     header.setAttribute('aria-expanded', String(isOpen()));
-    if (!isOpen()) { schedule(); return; }
+    if (!isOpen()) { concealPassword(); schedule(); return; }
     loadScopedStyle();
     (loaded ? refreshStatus() : load()).catch(pollingError);
   }).observe($('.inline-drawer-icon'), {attributes:true, attributeFilter:['class']});
@@ -383,7 +485,7 @@ function mount() {
     if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); header.click(); }
   });
   document.addEventListener('visibilitychange', () => {
-    if (document.hidden) clearTimeout(timer);
+    if (document.hidden) { concealPassword(); clearTimeout(timer); }
     else {
       for (const [key, result] of pendingResults) announceResult(key, result);
       if (isOpen() || running) {

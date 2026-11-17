@@ -1,10 +1,10 @@
 {
   "name": "luker-webdav-backup",
-  "version": "0.5.3",
+  "version": "0.5.4",
   "private": true,
   "description": "Development checks for the Luker WebDAV backup plugin",
   "scripts": {
-    "check": "node --check index.mjs && node --check webdav.mjs && node --input-type=module --check < frontend.js",
+    "check": "node --check index.mjs && node --check webdav.mjs && node --input-type=module --check < frontend.js && node --input-type=module --check < updates.js",
     "test": "node --test tests/*.test.mjs",
     "test:frontend": "node --test tests/frontend.test.mjs",
     "test:network": "node tests/run-network.mjs",
