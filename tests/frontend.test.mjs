@@ -5,19 +5,20 @@ import test from 'node:test';
 
 // Execute the browser module in an isolated DOM. Only import.meta.url is replaced;
 // all event handlers, configuration handling, requests and notifications are real.
-const source = readFileSync(new URL('../frontend.js', import.meta.url), 'utf8').replace(
-  "new URL('./style.css', import.meta.url)",
-  "new URL('./style.css', 'https://luker.test/scripts/extensions/webdav/frontend.js')",
-);
+const updateSource = readFileSync(new URL('../updates.js',import.meta.url),'utf8').replace('export function mountUpdates','function mountUpdates');
+const source = updateSource + '\n' + readFileSync(new URL('../frontend.js', import.meta.url), 'utf8')
+  .replace("import {mountUpdates} from './updates.js';",'')
+  .replaceAll('import.meta.url', "'https://luker.test/scripts/extensions/third-party/webdav/frontend.js'");
 const flush = async () => { await new Promise(resolve => setImmediate(resolve)); await new Promise(resolve => setImmediate(resolve)); };
 const selection = {settings:true,secrets:false,characters:true,chats:true,lorebooks:true,presets:true,assets:true,extensions:true,globalExtensions:false,vectors:false};
 function harness(t, {toasts = true, popups = true, oldBackend = false} = {}) {
   const dom = new JSDOM('<div id="extensions_settings"></div>', {runScripts:'outside-only',pretendToBeVisual:true,url:'https://luker.test'});
   t.after(() => dom.window.close());
   const w = dom.window;
-  const config = {version:oldBackend ? '0.4.0' : '0.5.2',url:'https://dav.jianguoyun.com/dav/',username:'test',passwordSet:true,storageEngine:'fs',selection:{...selection},categories:Object.fromEntries(Object.keys(selection).map(key => [key,key]))};
-  if (!oldBackend) Object.assign(config, {supportedUploadModes:['stream'],uploadMode:'stream'});
-  const h = {dom,w,config,calls:[],notices:[],popups:[],alerts:[],confirmations:[],allow:false,fail:{},tasks:new Map(),nextTimer:100000,backupCount:0};
+  Object.assign(w,{AbortController,TextDecoder,TextEncoder});
+  const config = {version:oldBackend ? '0.4.0' : '0.5.4',url:'https://dav.jianguoyun.com/dav/',username:'test',passwordSet:true,storageEngine:'fs',selection:{...selection},categories:Object.fromEntries(Object.keys(selection).map(key => [key,key]))};
+  if (!oldBackend) Object.assign(config, {supportedUploadModes:['stream'],uploadMode:'stream',capabilities:{passwordReveal:true}});
+  const h = {secret:'synthetic-application-password',dom,w,config,calls:[],notices:[],popups:[],alerts:[],confirmations:[],allow:false,fail:{},tasks:new Map(),nextTimer:100000,backupCount:0};
   h.status = {version:config.version,phase:'uploaded',busy:false,name:'old.zip',started:'2025-01-01',destination:config.url,bytes:100,remoteBytes:100,sizeVerification:'matched'};
   h.$ = selector => w.document.querySelector(selector);
   h.field = name => h.$(`[data-field="${name}"]`);
@@ -52,13 +53,24 @@ function harness(t, {toasts = true, popups = true, oldBackend = false} = {}) {
     const failure = h.fail[`${options.method || 'GET'} ${route}`];
     if (failure) return {ok:false,status:400,text:async () => JSON.stringify({error:failure})};
     let result;
+    if (route.startsWith('https://raw.githubusercontent.com/')) return new Response(JSON.stringify({version:'0.5.4'}));
+    if (route === '/password/reveal' && h.holdReveal) return new Promise(resolve=>{h.releaseReveal=()=>resolve({ok:true,status:200,text:async()=>JSON.stringify({password:h.secret})});});
     if (route === '/csrf-token') result = {token:'test'};
+    else if (route === '/password/reveal') result={password:h.secret};
+    else if (route === '/api/extensions/discover') result=[{name:'third-party/webdav',type:'global'}];
+    else if (route === '/api/users/plugins/list') result={ok:true,plugins:[{directory:'backend-folder',remoteUrl:'https://github.com/Aouky7/webdav_luker'}]};
+    else if (route === '/api/extensions/version') result={remoteUrl:'https://github.com/Aouky7/webdav_luker',currentBranchName:'main',currentCommitHash:'abc123',isUpToDate:true};
+    else if (route === '/updates/lock') { h.config.updatePending=true; result={ok:true,token:'test-lock'}; }
+    else if (route === '/updates/unlock') { h.config.updatePending=false; result={ok:true}; }
+    else if (route === '/api/users/plugins/update') result={ok:true,plugin:{directory:'backend-folder',remoteUrl:'https://github.com/Aouky7/webdav_luker'},restartRecommended:true};
+    else if (route === '/api/extensions/update') result={shortCommitHash:'def456',remoteUrl:'https://github.com/Aouky7/webdav_luker'};
     else if (route === '/status') result = {...h.status};
     else if (route === '/config') {
       if (options.method === 'POST') {
         const saved = JSON.parse(options.body);
         if (oldBackend) { delete saved.uploadMode; delete saved.stagingMaxMiB; }
-        Object.assign(config,saved);
+        if (saved.password) h.secret=saved.password;
+        delete saved.password; Object.assign(config,saved);
         if (config.url === 'https://dav.jianguoyun.com/dav/') config.url += 'LukerBackup/';
         result = {ok:true,url:config.url,uploadMode:config.uploadMode,stagingMaxMiB:config.stagingMaxMiB,note:'配置已保存，根目录已改为 /dav/LukerBackup/'};
       } else result = {...config};
@@ -77,6 +89,47 @@ function harness(t, {toasts = true, popups = true, oldBackend = false} = {}) {
   return h;
 }
 
+test('integrated updater obtains CSRF and backend lock before changing exact host installs',async t=>{
+  const h=harness(t);h.config.updateIdentity={directory:'backend-folder',repository:'https://github.com/Aouky7/webdav_luker'};
+  await h.open(true);for(let i=0;i<8;i++)await flush();
+  const install=h.$('[data-update="install"]');assert.equal(install.disabled,false);
+  h.allow=true;install.click();for(let i=0;i<12;i++)await flush();
+  const relevant=h.calls.filter(c=>['/updates/lock','/api/users/plugins/update','/api/extensions/update'].includes(c.route));
+  assert.deepEqual(relevant.map(c=>c.route),['/updates/lock','/api/users/plugins/update','/api/extensions/update']);
+  assert.ok(relevant.every(c=>c.options.headers['x-csrf-token']==='test'));
+  assert.match(h.$('[data-update="result"]').textContent,/成功.*当前运行版本尚未改变/s);
+  await h.click('backup');assert.equal(h.backupCount,0);assert.match(h.view('message').textContent,/更新待应用/);
+});
+
+test('saved password is fetched on eye click only; mask is never saved and typed stars remain a real password',async t=>{
+  const h=harness(t);await h.open(true);
+  assert.equal(h.field('password').value,'********');assert.equal(h.field('password').type,'password');
+  assert.equal(h.posted('/password/reveal').length,0);
+  await h.click('password-eye');assert.equal(h.field('password').value,h.secret);assert.equal(h.field('password').type,'text');
+  await h.click('save');assert.equal(JSON.parse(h.posted('/config').at(-1).options.body).password,'');
+  assert.equal(h.field('password').value,'********');
+  h.change('password','********');await h.click('save');assert.equal(JSON.parse(h.posted('/config').at(-1).options.body).password,'********');
+  assert.equal(h.secret,'********');
+  assert.ok(h.notices.every(n=>!n.text.includes('synthetic-application-password')));
+});
+
+test('reveal response cannot overwrite edits or expose secret after hide, reload or failed fetch',async t=>{
+  const h=harness(t);await h.open(true);h.holdReveal=true;
+  await h.click('password-eye');assert.ok(h.releaseReveal);h.change('password','new-secret');h.releaseReveal();await flush();
+  assert.equal(h.field('password').value,'new-secret');assert.equal(h.field('password').type,'password');
+  h.allow=true;await h.click('reload');await h.click('password-eye');await h.hide(true);h.releaseReveal();await flush();
+  assert.equal(h.field('password').type,'password');assert.equal(h.field('password').value,'********');
+  await h.hide(false);h.holdReveal=false;h.fail['POST /password/reveal']='sensitive-remote-error';await h.click('password-eye');
+  assert.ok(h.notices.every(n=>!n.text.includes('sensitive-remote-error')));
+});
+
+test('old backend allows toggling typed passwords but never invents the saved secret',async t=>{
+  const h=harness(t,{oldBackend:true});await h.open(true);await h.click('password-eye');
+  assert.equal(h.posted('/password/reveal').length,0);assert.match(h.view('message').textContent,/新版后端/);
+  h.change('password','typed');await h.click('password-eye');assert.equal(h.field('password').type,'text');
+  await h.hide(true);assert.equal(h.field('password').type,'password');assert.equal(h.field('password').value,'typed');
+});
+
 test('network failure details distinguish incomplete body from response wait and render as text', async t => {
   const h=harness(t);
   h.status={...h.status,phase:'failed',sizeVerification:undefined,error:'PUT 网络请求失败：ECONNRESET',networkDiagnostic:{method:'PUT',kind:'network',errorCode:'ECONNRESET',elapsedMs:115000,bodyBytes:141377967,uploadFinishedMs:null,responseStatus:null,reusedSocket:false}};
@@ -92,7 +145,7 @@ test('stream-only UI preserves dirty settings, reload, and a single upload confi
   const h = harness(t);
   await h.open(true);
   assert.equal(h.notices.length,0,'historical terminal status is silent');
-  assert.equal(h.$('#luker-webdav-panel-style').href,'https://luker.test/scripts/extensions/webdav/style.css?v=0.5.3');
+  assert.equal(h.$('#luker-webdav-panel-style').href,'https://luker.test/scripts/extensions/third-party/webdav/style.css?v=0.5.4');
   assert.equal(h.field('uploadMode'),null);
   assert.equal(h.field('stagingMaxMiB'),null);
   assert.equal(h.view('modeWarning'),null);

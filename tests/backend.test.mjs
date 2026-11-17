@@ -40,7 +40,15 @@ test('router uses bounded XML requests, persists recheck, rejects unsafe names a
   await init({use(fn){middleware=fn;},get(p,fn){routes.set('GET '+p,fn);},post(p,fn){routes.set('POST '+p,fn);}});
   async function invoke(key,body){let payload,code=200;const res={headersSent:false,status(c){code=c;return this;},json(x){payload=x;},set(){}};await routes.get(key)({body,user:{profile:{admin:true}}},res);return {payload,code};}
   let denied;middleware({user:{profile:{admin:false}}},{set(){},status(c){denied=c;return this;},json(){}},()=>assert.fail('nonadmin admitted'));assert.equal(denied,403);
-  const list=await invoke('GET /backups');assert.equal(list.payload.files[0].name,name);assert.equal(list.payload.files[0].bytes,4096);
+  let cache;middleware({user:{profile:{admin:true}}},{set(k,v){if(k==='Cache-Control')cache=v;}},()=>{});assert.equal(cache,'no-store');
+   const cfg=(await invoke('GET /config')).payload;assert.equal(cfg.password,undefined);assert.equal(cfg.passwordSet,true);assert.equal(cfg.capabilities.passwordReveal,true);
+   assert.equal((await invoke('POST /password/reveal',{})).payload.password,'fake-password');
+   const lock=await invoke('POST /updates/lock',{});assert.equal(lock.code,200);assert.equal((await invoke('GET /config')).payload.updatePending,true);
+   for(const route of ['POST /backup','POST /config','POST /test','POST /updates/lock'])assert.equal((await invoke(route,{})).code,409);
+   assert.equal((await invoke('POST /updates/unlock',{token:'wrong'})).code,409);
+   assert.equal((await invoke('POST /updates/unlock',{token:lock.payload.token})).code,200);
+   assert.equal((await invoke('GET /config')).payload.updatePending,false);
+   const list=await invoke('GET /backups');assert.equal(list.payload.files[0].name,name);assert.equal(list.payload.files[0].bytes,4096);
   assert.equal(calls[0].opts.headers.Depth,'1');assert.equal(calls[0].opts.headers['Content-Length'],Buffer.byteLength(calls[0].body));assert.ok(calls[0].body.includes('getcontentlength'));
   const verify=await invoke('POST /verify',{name});assert.equal(verify.payload.sizeVerification,'matched');
   const state=await invoke('GET /status');assert.equal(state.payload.remoteBytes,4096);assert.equal(state.payload.sizeVerification,'matched');
