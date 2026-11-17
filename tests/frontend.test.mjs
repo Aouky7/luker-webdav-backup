@@ -77,11 +77,22 @@ function harness(t, {toasts = true, popups = true, oldBackend = false} = {}) {
   return h;
 }
 
+test('network failure details distinguish incomplete body from response wait and render as text', async t => {
+  const h=harness(t);
+  h.status={...h.status,phase:'failed',sizeVerification:undefined,error:'PUT 网络请求失败：ECONNRESET',networkDiagnostic:{method:'PUT',kind:'network',errorCode:'ECONNRESET',elapsedMs:115000,bodyBytes:141377967,uploadFinishedMs:null,responseStatus:null,reusedSocket:false}};
+  await h.open(true);
+  let text=h.view('metadata').textContent;
+  assert.match(text,/115\.0 秒/);assert.match(text,/141377967 字节/);assert.match(text,/请求体发送完成未确认/);assert.match(text,/未收到响应头/);assert.match(text,/复用连接否/);
+  h.status.networkDiagnostic={...h.status.networkDiagnostic,uploadFinishedMs:110000,responseStatus:503,errorCode:'<img src=x>'};
+  await h.click('status');text=h.view('metadata').textContent;
+  assert.match(text,/110\.0 秒/);assert.match(text,/HTTP 503/);assert.equal(h.view('metadata').querySelector('img'),null);
+});
+
 test('stream-only UI preserves dirty settings, reload, and a single upload confirmation', async t => {
   const h = harness(t);
   await h.open(true);
   assert.equal(h.notices.length,0,'historical terminal status is silent');
-  assert.equal(h.$('#luker-webdav-panel-style').href,'https://luker.test/scripts/extensions/webdav/style.css?v=0.5.2');
+  assert.equal(h.$('#luker-webdav-panel-style').href,'https://luker.test/scripts/extensions/webdav/style.css?v=0.5.3');
   assert.equal(h.field('uploadMode'),null);
   assert.equal(h.field('stagingMaxMiB'),null);
   assert.equal(h.view('modeWarning'),null);
