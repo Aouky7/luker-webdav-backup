@@ -1,4 +1,4 @@
-/* WebDAV Backup 0.5.2. Scoped panel; drawer header inherits Luker's theme. */
+/* WebDAV Backup 0.5.5. Scoped panel; drawer header inherits Luker's theme. */
 #luker-webdav-panel { margin: 0; min-width: 0; color: var(--SmartThemeBodyColor, inherit); }
 #luker-webdav-panel *, #luker-webdav-panel *::before, #luker-webdav-panel *::after { box-sizing: border-box; }
 #luker-webdav-panel .wd-body { display: flex; flex-direction: column; gap: 12px; padding: 10px 2px 14px; font-size: .92em; line-height: 1.5; }
@@ -47,6 +47,10 @@
 #luker-webdav-panel .wd-cloud-file .wd-verification { font-size: .86em; }
 #luker-webdav-panel [data-view="styleWarning"] { margin: 0; padding: 8px 10px; border-inline-start: 3px solid #c65b52; border-radius: 3px; background: color-mix(in srgb, #c65b52 10%, transparent); font-size: .88em; }
 #luker-webdav-panel [hidden] { display: none !important; }
+#luker-webdav-panel .wd-update-notice { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 0 0 10px; padding: 10px; border: 1px solid #b28a36; border-radius: 7px; background: color-mix(in srgb, #b28a36 16%, transparent); font-size: .9em; }
+#luker-webdav-panel .wd-update-notice span { flex: 1 1 150px; min-width: 0; font-weight: 600; overflow-wrap: anywhere; }
+#luker-webdav-panel .wd-update-notice button { flex: 0 0 auto; }
+#luker-webdav-panel .wd-update-notice button[aria-label="关闭更新提示"] { min-width: 36px; padding-inline: 8px; font-size: 1.1em; }
 @media (max-width: 380px) {
   #luker-webdav-panel .wd-section { padding: 10px; }
   #luker-webdav-panel .wd-categories { grid-template-columns: 1fr; }

@@ -2,7 +2,7 @@ import {mountUpdates} from './updates.js';
 // In-app companion for the WebDAV Backup server plugin (loaded as an ES module).
 const ROOT = '/api/plugins/webdav-backup';
 const ID = 'luker-webdav-panel';
-const VERSION = '0.5.4';
+const VERSION = '0.5.5';
 const LONG_ROUTES = new Set(['/test', '/backups', '/verify']);
 const ctx = () => (globalThis.Luker || globalThis.SillyTavern).getContext();
 let popupQueue = Promise.resolve();
@@ -145,7 +145,7 @@ function mount() {
 <p class="wd-message" data-view="cloudMessage" role="status">尚未读取云端列表</p>
 <div class="wd-cloud-list" data-view="cloudList" role="list" aria-label="云端备份文件"></div>
 </section>
-<details class="wd-notes"><summary>关于此扩展 · 0.5.4</summary><small class="wd-hint">仅使用流式上传，边生成边上传，不创建本地 ZIP。自动创建目录需要 0.4.0 后端。本扩展不提供恢复、删除或下载备份操作；大小一致不代表内容完整或可恢复。</small></details>
+<details class="wd-notes"><summary>关于此扩展 · 0.5.5</summary><small class="wd-hint">仅使用流式上传，边生成边上传，不创建本地 ZIP。自动创建目录需要 0.4.0 后端。本扩展不提供恢复、删除或下载备份操作；大小一致不代表内容完整或可恢复。</small></details>
 </div></div></div>`;
   target.append(panel);
   loadScopedStyle();
@@ -158,7 +158,9 @@ function mount() {
   const isOpen = () => $('.inline-drawer-icon').classList.contains('up');
   let loaded = false, loading = false, dirty = false, running = false, checking = null, timer;
   let starting = false, pollingFailed = false, updateLocked = false, backendVersion = '', updateIdentity = null, updateToken = null;
-  const updater = mountUpdates({panel,version:VERSION,moduleUrl:import.meta.url,api:hostApi,notify,confirm:confirmUpload,
+  let updateNoticeDismissed = false;
+  let updater;
+  updater = mountUpdates({panel,version:VERSION,moduleUrl:import.meta.url,api:hostApi,notify,confirm:confirmUpload,
     getBusy:() => running || starting || loading || listing || verifying || updateLocked,
     getDirty:() => dirty,
     onLock:async value => {
@@ -172,7 +174,34 @@ function mount() {
         catch { updateLocked = true; message('更新锁释放未确认，请重启后端后再操作。','warning'); }
       }
     },
+    onUpdateAvailable: info => {
+      if (updateNoticeDismissed) return;
+      let notice = panel.querySelector('.wd-update-notice');
+      if (!notice) {
+        notice = document.createElement('div');
+        notice.className = 'wd-update-notice';
+        notice.setAttribute('role','status');
+        notice.setAttribute('aria-live','polite');
+        const label = document.createElement('span');
+        const install = document.createElement('button');
+        install.type = 'button'; install.className = 'menu_button';
+        install.dataset.updateNoticeAction = 'install'; install.textContent = '更新';
+        const dismiss = document.createElement('button');
+        dismiss.type = 'button'; dismiss.className = 'menu_button';
+        dismiss.dataset.updateNoticeAction = 'dismiss'; dismiss.setAttribute('aria-label','关闭更新提示');
+        dismiss.title = '关闭更新提示'; dismiss.textContent = '×';
+        notice.append(label,install,dismiss);
+        panel.insertBefore(notice,panel.firstChild);
+      }
+      notice.querySelector('span').textContent = '发现 WebDAV 更新：' + info.latestVersion;
+      notice.querySelector('[data-update-notice-action="install"]').disabled = !info.canUpdate;
+    },
   });
+  // Check once at plugin startup without opening the drawer or showing transient toasts.
+  void api('/config').then(config => {
+    updateLocked = config.updatePending === true;
+    updater.setConfig({version:config.version,updateIdentity:config.updateIdentity,updatePending:config.updatePending});
+  }).catch(() => {});
   const passwordInput = field('password'), passwordEye = $('[data-action="password-eye"]');
   const PASSWORD_MASK = '********';
   let passwordSaved = false, passwordEdited = false, passwordSentinel = false, passwordRevealSupported = false, passwordRevision = 0;
@@ -404,6 +433,17 @@ function mount() {
     return globalThis.confirm(text);
   }
   panel.addEventListener('click', async event => {
+    const noticeButton = event.target.closest('button[data-update-notice-action]');
+    if (noticeButton) {
+      event.preventDefault();
+      if (noticeButton.dataset.updateNoticeAction === 'dismiss') {
+        updateNoticeDismissed = true;
+        panel.querySelector('.wd-update-notice')?.remove();
+      } else if (noticeButton.dataset.updateNoticeAction === 'install') {
+        await updater.install();
+      }
+      return;
+    }
     const button = event.target.closest('button[data-action]'); if (!button) return;
     const action = button.dataset.action;
     button.disabled = true;
