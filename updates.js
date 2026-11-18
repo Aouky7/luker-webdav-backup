@@ -51,7 +51,7 @@ async function latestVersion(fetchImpl) {
   } finally { clearTimeout(timer); }
 }
 
-export function mountUpdates({panel,version,moduleUrl,api,notify,confirm,getBusy = () => false,getDirty = () => false,onLock = () => {},fetchImpl = globalThis.fetch}) {
+export function mountUpdates({panel,version,moduleUrl,api,notify,confirm,getBusy = () => false,getDirty = () => false,onLock = () => {},onUpdateAvailable = () => {},onUpdateState = () => {},fetchImpl = globalThis.fetch}) {
   const body = panel.querySelector('.wd-body');
   if (!body) throw Error('更新面板缺少挂载位置');
   const section = panel.ownerDocument.createElement('section');
@@ -59,7 +59,7 @@ export function mountUpdates({panel,version,moduleUrl,api,notify,confirm,getBusy
   section.innerHTML = '<div class="wd-heading"><h4>版本与更新</h4></div><p class="wd-hint" data-update="versions"></p><p class="wd-message" data-update="mismatch" role="status" hidden></p><p class="wd-message" data-update="result" role="status">读取配置后检查更新</p><div class="wd-buttons"><button type="button" class="menu_button" data-update="check">检查更新</button><button type="button" class="menu_button" data-update="install" disabled>更新前后端</button></div><small class="wd-hint">依次更新服务端插件和前端扩展，不是原子更新。完成后需重启 Luker 后端并重新加载页面；不会自动重启或强制覆盖本地修改。</small>';
   body.append(section);
   const $ = name => section.querySelector('[data-update="' + name + '"]');
-  let backendVersion = '', identity = null, checked = null, automaticChecked = false;
+  let backendVersion = '', identity = null, hasConfig = false, checked = null, automaticChecked = false;
   let checking = false, updating = false, locked = false, lastCheck = 0;
   const state = {backend:'未执行',frontend:'未执行'};
   const text = (message,tone = 'info') => { $('result').textContent = message; $('result').dataset.tone = tone; };
@@ -96,25 +96,25 @@ export function mountUpdates({panel,version,moduleUrl,api,notify,confirm,getBusy
     if (!status.currentBranchName || !status.currentCommitHash) throw Error('前端没有可确认的 Git 分支，请在宿主管理中手动更新');
     return {directory:identity.directory,frontend,status};
   }
-  async function check({automatic = false} = {}) {
+  async function check({automatic = false,allowRepeatAutomatic = false} = {}) {
     if (checking || updating || locked) return;
-    if (automatic && automaticChecked) return;
-    if (automatic) automaticChecked = true;
+    if (automatic && automaticChecked && !allowRepeatAutomatic) return;
     if (lastCheck && Date.now() - lastCheck < 15000) return;
     if (getBusy() || getDirty()) { if (!automatic) text('请在当前操作结束并保存配置后检查更新','warning'); return; }
+    if (automatic) automaticChecked = true;
     checking = true; checked = null; lastCheck = Date.now(); buttons(); text('正在检查版本与安装来源…');
     try {
       const [remote,target] = await Promise.allSettled([latestVersion(fetchImpl),identify()]);
       checked = target.status === 'fulfilled' ? target.value : null;
       const latest = remote.status === 'fulfilled' ? remote.value : null;
-      const upgrade = latest && (newer(latest,version) || newer(latest,backendVersion));
+      const upgrade = !!(latest && (newer(latest,version) || newer(latest,backendVersion)));
       const codeUpdate = checked?.status?.isUpToDate === false;
       const parts = [latest ? '仓库版本：' + latest + (upgrade ? '，有新版本。' : '。') : '在线版本检查失败，可稍后重试。'];
       if (codeUpdate) parts.push('前端仓库有新提交。');
       if (target.status === 'rejected') parts.push(target.reason?.message || '无法确认更新能力，请手动更新。');
       else parts.push('已核实前后端安装来源，可依次更新；后端是否有新提交由更新接口确认。');
       text(parts.join('\n'),upgrade || codeUpdate || !checked ? 'warning' : 'info');
-      if (upgrade || codeUpdate) notify('发现更新，请在“版本与更新”中查看。','info','WebDAV 更新提示');
+      if (upgrade || codeUpdate) onUpdateAvailable({latestVersion:latest || '（未知）',upgrade,codeUpdate,canUpdate:!!checked});
       return {latest,canUpdate:!!checked};
     } finally { checking = false; buttons(); }
   }
@@ -166,7 +166,7 @@ export function mountUpdates({panel,version,moduleUrl,api,notify,confirm,getBusy
       backendVersion = typeof config?.version === 'string' ? config.version : '';
       identity = config?.updateIdentity ? {...config.updateIdentity} : null;
       checked = null; versions(); buttons();
-      if (!automaticChecked && !checking && !updating) void check({automatic:true});
+      if (!checking && !updating) void check({automatic:true,allowRepeatAutomatic:true});
     },
     check,install,
     getState:() => ({...state,locked,checking,updating}),
