@@ -1,4 +1,4 @@
-/* WebDAV Backup 0.5.6. Scoped panel; drawer header inherits Luker's theme. */
+/* WebDAV Backup 0.5.7. Scoped panel; drawer header inherits Luker's theme. */
 #luker-webdav-panel {
   --wd-accent: var(--SmartThemeQuoteColor, #7b9db8);
   --wd-border: var(--SmartThemeBorderColor, #8886);
@@ -511,3 +511,21 @@
   #luker-webdav-panel .wd-metadata { grid-template-columns: minmax(0, 1fr); gap: 2px; }
   #luker-webdav-panel .wd-metadata dd { margin-bottom: 5px; }
 }
+
+/* Cloud snapshots show compact summaries; details and restore stay in normal flow. */
+#luker-webdav-panel .wd-snapshots { min-width: 0; border-top: 1px solid var(--wd-border); }
+#luker-webdav-panel :is(.wd-snapshots,.wd-snapshot-details,.wd-restore) > summary { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; min-height: 44px; padding: 8px 2px; cursor: pointer; }
+#luker-webdav-panel :is(.wd-snapshots,.wd-snapshot-details,.wd-restore) > summary::after { content: '+'; margin-inline-start: auto; font-weight: 650; color: var(--wd-accent); }
+#luker-webdav-panel :is(.wd-snapshots,.wd-snapshot-details,.wd-restore)[open] > summary::after { content: '−'; }
+#luker-webdav-panel .wd-cloud-file { display: block; padding: 4px 10px; }
+#luker-webdav-panel .wd-snapshot-details { min-width: 0; }
+#luker-webdav-panel .wd-snapshot-time { font-weight: 650; font-variant-numeric: tabular-nums; }
+#luker-webdav-panel .wd-snapshot-details .wd-file-name { margin-top: 6px; font-size: .86em; font-weight: 500; color: var(--wd-muted); }
+#luker-webdav-panel .wd-snapshot-details .wd-buttons { margin-bottom: 8px; }
+#luker-webdav-panel .wd-cloud-pager { margin-top: 10px; }
+#luker-webdav-panel .wd-restore-body { display: flex; min-width: 0; flex-direction: column; gap: 10px; }
+#luker-webdav-panel .wd-restore-options { display: flex; flex-direction: column; min-width: 0; margin: 0; padding: 0; border: 0; gap: 12px; }
+#luker-webdav-panel .wd-restore-options:disabled { opacity: .6; }
+#luker-webdav-panel .wd-restore-options legend { padding: 8px 0; font-weight: 650; }
+#luker-webdav-panel .wd-restore-ack { display: flex; align-items: flex-start; gap: 8px; font-size: .9em; }
+#luker-webdav-panel .wd-restore-ack input { flex: 0 0 auto; width: 18px; height: 18px; margin: 3px 0 0; }

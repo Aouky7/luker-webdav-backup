@@ -4,11 +4,11 @@ import {flush, harness} from './frontend-harness.mjs';
 
 
 test('startup silently checks once and pins a dismissible update banner above the drawer',async t=>{
-  const h=harness(t);h.latestVersion='0.5.7';
+  const h=harness(t);h.latestVersion='0.5.8';
   for(let i=0;i<10;i++)await flush();
   const banner=h.$('.wd-update-notice');
   assert.ok(banner);assert.equal(h.$('#luker-webdav-panel').firstElementChild,banner);
-  assert.match(banner.textContent,/0\.5\.7/);assert.equal(h.notices.length,0);
+  assert.match(banner.textContent,/0\.5\.8/);assert.equal(h.notices.length,0);
   assert.equal(banner.querySelector('[data-update-notice-action="install"]').disabled,false);
   banner.querySelector('[data-update-notice-action="install"]').click();
   for(let i=0;i<8;i++)await flush();
@@ -76,7 +76,7 @@ test('stream-only UI preserves dirty settings, reload, and a single upload confi
   const h = harness(t);
   await h.open(true);
   assert.equal(h.notices.length,0,'historical terminal status is silent');
-  assert.equal(h.$('#luker-webdav-panel-style').href,'https://luker.test/scripts/extensions/third-party/webdav/style.css?v=0.5.6');
+  assert.equal(h.$('#luker-webdav-panel-style').href,'https://luker.test/scripts/extensions/third-party/webdav/style.css?v=0.5.7');
   assert.equal(h.field('uploadMode'),null);
   assert.equal(h.field('stagingMaxMiB'),null);
   assert.equal(h.view('modeWarning'),null);

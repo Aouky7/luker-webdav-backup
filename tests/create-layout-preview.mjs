@@ -6,19 +6,21 @@ import {dirname, resolve} from 'node:path';
 const root = new URL('../', import.meta.url);
 const css = readFileSync(new URL('style.css', root), 'utf8');
 const updates = readFileSync(new URL('updates.js', root), 'utf8').replace('export function mountUpdates', 'function mountUpdates');
+const restore = readFileSync(new URL('restore.js', root), 'utf8').replace('export function mountRestore', 'function mountRestore');
 const frontend = readFileSync(new URL('frontend.js', root), 'utf8')
   .replace("import {mountUpdates} from './updates.js';", '')
+  .replace("import {mountRestore} from './restore.js';", '')
   .replaceAll('import.meta.url', JSON.stringify('https://preview.invalid/scripts/extensions/third-party/webdav/frontend.js'));
 const fixtures = `
 const categoryNames = {settings:'设置',secrets:'API 密钥 / 机密',characters:'角色 / 头像 / 背景',chats:'聊天 / 群组',lorebooks:'世界书',presets:'预设 / 界面布局',assets:'素材 / 文件',extensions:'用户扩展',globalExtensions:'全局前端扩展（管理员）',vectors:'向量索引'};
-const config = {version:'0.5.6',url:'https://dav.example.com/LukerBackup/',username:'demo-user',passwordSet:true,storageEngine:'fs',selection:Object.fromEntries(Object.keys(categoryNames).map(k=>[k,!['secrets','globalExtensions'].includes(k)])),categories:categoryNames,capabilities:{passwordReveal:true},updateIdentity:{directory:'webdav-backup',repository:'https://github.com/Aouky7/webdav_luker'},uploadMode:'stream'};
-let task = {version:'0.5.6',phase:'uploaded',busy:false,name:'Luker-demo.zip',started:'2026-01-01T08:00:00Z',finished:'2026-01-01T08:02:00Z',destination:config.url,bytes:172727804,remoteBytes:172727804,sizeVerification:'matched'};
+const config = {version:'0.5.7',url:'https://dav.example.com/LukerBackup/',username:'demo-user',passwordSet:true,storageEngine:'fs',selection:Object.fromEntries(Object.keys(categoryNames).map(k=>[k,!['secrets','globalExtensions'].includes(k)])),categories:categoryNames,capabilities:{passwordReveal:true,cloudRestore:true},updateIdentity:{directory:'webdav-backup',repository:'https://github.com/Aouky7/webdav_luker'},uploadMode:'stream'};
+let task = {version:'0.5.7',phase:'uploaded',busy:false,name:'Luker-demo.zip',started:'2026-01-01T08:00:00Z',finished:'2026-01-01T08:02:00Z',destination:config.url,bytes:172727804,remoteBytes:172727804,sizeVerification:'matched'};
 let backupTick = 0;
 window.__WD_PREVIEW__ = {requests:[],uploadCount:0};
 window.fetch = async (url, options={}) => {
   const route = String(url).replace('/api/plugins/webdav-backup','');
   window.__WD_PREVIEW__.requests.push(route);
-  const posted = options.body ? JSON.parse(options.body) : {};
+  const posted = typeof options.body === 'string' ? JSON.parse(options.body) : {};
   let data;
   if (route === '/csrf-token') data={token:'preview-only'};
   else if (route === '/config') {
@@ -32,12 +34,22 @@ window.fetch = async (url, options={}) => {
     data={...task};
   } else if (route === '/backup') {
     window.__WD_PREVIEW__.uploadCount++; backupTick=0;
-    task={version:'0.5.6',phase:'uploading',busy:true,name:'Luker-preview.zip',started:'2026-01-01T08:00:00Z',bytes:172727804,destination:config.url}; data={started:true,...task};
+    task={version:'0.5.7',phase:'uploading',busy:true,name:'Luker-preview.zip',started:'2026-01-01T08:00:00Z',bytes:172727804,destination:config.url}; data={started:true,...task};
   } else if (route === '/backups') data={files:Array.from({length:12},(_,i)=>({name:'Luker-demo-'+String(i+1).padStart(2,'0')+'.zip',bytes:172727804-i*1024,modified:'2026-01-01T08:02:00Z'})),limited:false};
   else if (route === '/verify') data={name:posted.name,remoteBytes:172727804,expectedBytes:null,sizeVerification:'observed',verificationSource:'PROPFIND',verification:'示例结果：历史文件缺少发送基准。'};
   else if (route === '/test') data={ok:true,note:'示例目录测试通过；此预览没有访问真实服务。'};
   else if (route === '/password/reveal') data={password:'preview-example-password'};
-  else if (route.startsWith('https://raw.githubusercontent.com/')) data={version:'0.5.6'};
+  else if (route.startsWith('https://raw.githubusercontent.com/')) data={version:'0.5.7'};
+  else if (route === '/api/users/me') data={handle:'demo-user',admin:true};
+  else if (route === '/restore/prepare') data={token:'11111111-2222-4333-8444-555555555555',name:posted.name,bytes:8};
+  else if (route === '/restore/source') return new Response(new Uint8Array([80,75,3,4,0,0,0,0]),{status:200});
+  else if (route === '/restore/commit' || route === '/restore/release') data={ok:true};
+  else if (route === '/api/users/restore-backup/uploads') data={uploadId:'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'};
+  else if (route.startsWith('/api/users/restore-backup/uploads/') && route.includes('/chunks/')) data={ok:true,offset:Number(route.split('/').at(-1)),bytes:options.body.byteLength};
+  else if (route.endsWith('/finalize')) data={size:8};
+  else if (route === '/api/users/restore-backup/probe') data={engineKind:'fs',crossModeRequired:false,scratchCredsNeeded:null};
+  else if (route === '/api/users/restore-backup') data={mode:posted.mode,restoredCount:12,failedCount:0,skippedCount:0,rejectedCount:0};
+  else if (options.method==='DELETE' && route.startsWith('/api/users/restore-backup/uploads/')) return new Response(null,{status:204});
   else if (route === '/api/extensions/discover') data=[{name:'third-party/webdav',type:'global'}];
   else if (route === '/api/users/plugins/list') data={ok:true,plugins:[{directory:'webdav-backup',remoteUrl:'https://github.com/Aouky7/webdav_luker'}]};
   else if (route === '/api/extensions/version') data={remoteUrl:'https://github.com/Aouky7/webdav_luker',currentBranchName:'main',currentCommitHash:'preview-only',isUpToDate:true};
@@ -71,14 +83,14 @@ document.addEventListener('click',event=>{
 });
 `;
 const html = `<!doctype html>
-<html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data:; connect-src 'none'"><title>WebDAV 四页签布局预览</title>
+<html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data:; connect-src 'none'"><title>WebDAV 快照收纳与恢复预览</title>
 <style>
 :root{color-scheme:dark;--SmartThemeBodyColor:#e6e6ea;--SmartThemeBorderColor:#ffffff24;--SmartThemeQuoteColor:#89baf5;--SmartThemeBlurTintColor:#1b1c20;font:16px system-ui,sans-serif;background:#1b1c20;color:var(--SmartThemeBodyColor)}
 :root.light{color-scheme:light;--SmartThemeBodyColor:#232a35;--SmartThemeBorderColor:#172b4d24;--SmartThemeQuoteColor:#2467ba;--SmartThemeBlurTintColor:#fff;background:#f5f7fa}
 :root.large{font-size:24px}body{margin:0;padding:16px;box-sizing:border-box}main{max-width:760px;margin:auto}button,input{font:inherit;color:inherit}button{cursor:pointer}button:disabled{cursor:default}.preview-tools{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:12px}.preview-tools span{margin-inline-end:auto}.preview-tools button,.menu_button{border:1px solid var(--SmartThemeBorderColor);background:transparent;border-radius:6px;padding:8px}.preview-note{font-size:.8rem;line-height:1.6;opacity:.75;margin:4px 0 16px}.text_pole{border:1px solid var(--SmartThemeBorderColor);background:color-mix(in srgb,var(--SmartThemeBodyColor) 3%,transparent)}.inline-drawer-header{display:flex;justify-content:space-between;align-items:center;min-height:44px;border-bottom:1px solid var(--SmartThemeBorderColor);cursor:pointer}.inline-drawer-icon::before{content:'⌄'}.inline-drawer-icon.up::before{content:'⌃'}.inline-drawer:has(.inline-drawer-icon.down)>.inline-drawer-content{display:none}.fa-eye::before{content:'◉'}.fa-eye-slash::before{content:'◌'}[hidden]{display:none!important}#preview-notice{padding:10px;border:1px solid var(--SmartThemeBorderColor);border-radius:6px;font-size:.85rem;line-height:1.5}input[type=checkbox]{accent-color:var(--SmartThemeQuoteColor)}
 </style><style id="luker-webdav-panel-style" data-state="loaded">${css}</style></head>
-<body><main><div class="preview-tools"><span>交互布局预览</span><button type="button" id="preview-theme">深浅主题</button><button type="button" id="preview-font">放大字体</button></div><p class="preview-note">示例数据 · 操作只在本页模拟，不连接真实 WebDAV，也不会备份、更新或保存到你的客户端。正式效果继承 Luker 主题。</p><div id="extensions_settings"></div><p id="preview-notice" role="status" hidden></p></main>
-<script>${fixtures}\n${updates}\n${frontend}\n${controls}</script></body></html>`;
+<body><main><div class="preview-tools"><span>快照收纳与恢复预览</span><button type="button" id="preview-theme">深浅主题</button><button type="button" id="preview-font">放大字体</button></div><p class="preview-note">示例数据 · 操作只在本页模拟，不连接真实 WebDAV，也不会备份、恢复、更新或保存到你的客户端。正式效果继承 Luker 主题。</p><div id="extensions_settings"></div><p id="preview-notice" role="status" hidden></p></main>
+<script>${fixtures}\n${updates}\n${restore}\n${frontend}\n${controls}</script></body></html>`;
 const output = resolve(process.argv[2] || 'webdav-layout-preview.html');
 mkdirSync(dirname(output), {recursive:true});
 writeFileSync(output, html);

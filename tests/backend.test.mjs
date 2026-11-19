@@ -38,7 +38,7 @@ test('router uses bounded XML requests, persists recheck, rejects unsafe names a
    return req;
   };
   await init({use(fn){middleware=fn;},get(p,fn){routes.set('GET '+p,fn);},post(p,fn){routes.set('POST '+p,fn);}});
-  async function invoke(key,body){let payload,code=200;const res={headersSent:false,status(c){code=c;return this;},json(x){payload=x;},set(){}};await routes.get(key)({body,user:{profile:{admin:true}}},res);return {payload,code};}
+  async function invoke(key,body){let payload,code=200;const res={headersSent:false,status(c){code=c;return this;},json(x){payload=x;},set(){}};await routes.get(key)({body,user:{profile:{admin:true,handle:'test-user'}}},res);return {payload,code};}
   let denied;middleware({user:{profile:{admin:false}}},{set(){},status(c){denied=c;return this;},json(){}},()=>assert.fail('nonadmin admitted'));assert.equal(denied,403);
   let cache;middleware({user:{profile:{admin:true}}},{set(k,v){if(k==='Cache-Control')cache=v;}},()=>{});assert.equal(cache,'no-store');
    const cfg=(await invoke('GET /config')).payload;assert.equal(cfg.password,undefined);assert.equal(cfg.passwordSet,true);assert.equal(cfg.capabilities.passwordReveal,true);
@@ -56,7 +56,13 @@ test('router uses bounded XML requests, persists recheck, rejects unsafe names a
   const count=calls.length;
   for(const invalid of ['../secret.zip','https://evil.example/test.zip','bad.zip',name+'.partial']) assert.equal((await invoke('POST /verify',{name:invalid})).code,400);
   assert.equal(calls.length,count);
-  oversized=true;const tooLarge=await invoke('GET /backups');assert.equal(tooLarge.code,400);assert.ok(tooLarge.payload.error.includes('2 MiB'));
+  const prepared=await invoke('POST /restore/prepare',{name});assert.equal(prepared.code,200);assert.equal(prepared.payload.bytes,4096);
+   const restoreConfig=(await invoke('GET /config')).payload;assert.equal(restoreConfig.capabilities.cloudRestore,true);assert.equal(restoreConfig.restorePending,true);assert.equal(restoreConfig.restoreState.token,undefined);
+   for(const route of ['POST /backup','POST /config','POST /test','POST /updates/lock'])assert.equal((await invoke(route,{})).code,409,'restore lock must block '+route);
+   assert.equal((await invoke('POST /restore/commit',{token:prepared.payload.token})).code,409,'staging is required before commit');
+   assert.equal((await invoke('POST /restore/release',{token:prepared.payload.token})).code,200);
+   assert.equal((await invoke('GET /config')).payload.restorePending,false);
+   oversized=true;const tooLarge=await invoke('GET /backups');assert.equal(tooLarge.code,400);assert.ok(tooLarge.payload.error.includes('2 MiB'));
  } finally {
   https.request=originalRequest;
   process.chdir(cwd);

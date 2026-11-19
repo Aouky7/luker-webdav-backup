@@ -1,9 +1,10 @@
 import {mountUpdates} from './updates.js';
+import {mountRestore} from './restore.js';
 // In-app companion for the WebDAV Backup server plugin (loaded as an ES module).
 const ROOT = '/api/plugins/webdav-backup';
 const ID = 'luker-webdav-panel';
-const VERSION = '0.5.6';
-const LONG_ROUTES = new Set(['/test', '/backups', '/verify']);
+const VERSION = '0.5.7';
+const LONG_ROUTES = new Set(['/test', '/backups', '/verify', '/restore/prepare']);
 const ctx = () => (globalThis.Luker || globalThis.SillyTavern).getContext();
 let popupQueue = Promise.resolve();
 function notify(text, tone = 'info', title = 'WebDAV 备份') {
@@ -117,6 +118,7 @@ function mount() {
 </div>
 <div class="wd-global-status" data-view="globalTask" hidden><span data-view="globalTaskText" role="status"></span><button type="button" class="wd-inline-link" data-nav="task">查看任务</button></div>
 <div class="wd-global-status" data-view="globalUpdate" hidden><span data-view="globalUpdateText" role="status"></span><button type="button" class="wd-inline-link" data-nav="settings">查看更新</button></div>
+<div class="wd-global-status" data-view="globalRestore" hidden><span>恢复准备或结果待核实</span><button type="button" class="wd-inline-link" data-nav="cloud">查看恢复</button></div>
 <div class="wd-dirty" data-view="dirty" hidden><span role="status">有未保存更改</span><button type="button" class="menu_button" data-action="save">保存更改</button></div>
 <p class="wd-message" data-view="message" role="status" hidden></p>
 <section class="wd-tabpanel" id="wd-page-backup" role="tabpanel" aria-labelledby="wd-tab-backup" tabindex="0" data-page="backup">
@@ -144,9 +146,10 @@ function mount() {
 <div class="wd-heading wd-page-heading"><h4>云端备份</h4><button type="button" class="menu_button" data-action="list">刷新列表</button></div>
 <p class="wd-hint" data-view="cloudDestination">尚未读取保存的目录</p>
 <p class="wd-message" data-view="cloudMessage" role="status">尚未读取云端列表</p>
-<div class="wd-cloud-list" data-view="cloudList" role="list" aria-label="云端备份文件"></div>
-<div class="wd-cloud-pager" data-view="cloudPager" hidden><button type="button" class="menu_button" data-action="cloud-prev">上一页</button><span data-view="cloudPage" role="status"></span><button type="button" class="menu_button" data-action="cloud-next">下一页</button></div>
-<small class="wd-hint">仅手动读取已保存的目录；检查大小不验证 ZIP 内容完整性或能否恢复。</small>
+<details class="wd-snapshots" data-view="snapshots" open><summary>备份快照 <span class="wd-caption" data-view="snapshotCount">尚未读取</span></summary><div class="wd-cloud-list" data-view="cloudList" role="list" aria-label="云端备份文件"></div>
+<div class="wd-cloud-pager" data-view="cloudPager" hidden><button type="button" class="menu_button" data-action="cloud-prev">上一页</button><span data-view="cloudPage" role="status"></span><button type="button" class="menu_button" data-action="cloud-next">下一页</button></div></details>
+<div data-view="restoreMount"></div>
+<small class="wd-hint">仅手动读取已保存的目录；大小一致不等于归档完整或可恢复。只恢复你信任的快照，扩展可能包含可执行代码。</small>
 </section>
 <section class="wd-tabpanel" id="wd-page-settings" role="tabpanel" aria-labelledby="wd-tab-settings" tabindex="0" data-page="settings" hidden>
 <section class="wd-section" aria-label="连接配置">
@@ -159,8 +162,8 @@ function mount() {
 <small class="wd-hint" data-view="configState">展开后读取已保存的配置</small>
 <div class="wd-buttons"><button type="button" class="menu_button" data-action="save">保存配置</button><button type="button" class="menu_button" data-action="test">测试连接</button><button type="button" class="menu_button" data-action="reload">重新读取</button></div>
 </section>
-<details class="wd-updates-details" data-view="updatesDetails"><summary>版本与更新 <span class="wd-caption" data-view="versionSummary">前端 0.5.6</span></summary><div data-view="updatesMount"></div></details>
-<details class="wd-about"><summary>使用说明与关于 · 0.5.6</summary><small class="wd-hint">仅使用流式上传：边生成 ZIP 边上传，不创建本地完整 ZIP。服务须支持未知长度上传。</small><small class="wd-hint wd-directory-hint">测试连接或开始备份时，会自动创建缺失的目标及中间目录；需要可用的 WebDAV 根目录和创建权限。坚果云 /dav/ 根地址保存后会改为 /dav/LukerBackup/。</small><small class="wd-hint">本扩展不提供恢复、删除或下载备份操作；大小一致不代表内容完整或可恢复。</small></details>
+<details class="wd-updates-details" data-view="updatesDetails"><summary>版本与更新 <span class="wd-caption" data-view="versionSummary">前端 0.5.7</span></summary><div data-view="updatesMount"></div></details>
+<details class="wd-about"><summary>使用说明与关于 · 0.5.7</summary><small class="wd-hint">仅使用流式上传：边生成 ZIP 边上传，不创建本地完整 ZIP。服务须支持未知长度上传。</small><small class="wd-hint wd-directory-hint">测试连接或开始备份时，会自动创建缺失的目标及中间目录；需要可用的 WebDAV 根目录和创建权限。坚果云 /dav/ 根地址保存后会改为 /dav/LukerBackup/。</small><small class="wd-hint">云端可准备并调用 Luker 原生接口恢复文件存储快照；数据库或跨存储恢复请使用宿主入口。本扩展不提供删除云端备份操作。</small></details>
 </section>
 </div></div></div>`;
   target.append(panel);
@@ -177,7 +180,7 @@ function mount() {
   let starting = false, pollingFailed = false, updateLocked = false, backendVersion = '', updateIdentity = null, updateToken = null;
   let activePage = 'backup', initialPageChosen = false, saving = false, editingRevision = 0;
   let savedConfig = null, connectionTested = false, lastStatus = null, updateAttention = false;
-  let updateNoticeDismissed = false;
+  let updateNoticeDismissed = false, restoreLocked = false;
   const tabs = [...panel.querySelectorAll('[data-tab]')];
   function paintDirty() {
     $('[data-view="dirty"]').hidden = !dirty;
@@ -227,6 +230,7 @@ function mount() {
     panel.querySelectorAll('[data-page]').forEach(page => { page.hidden = page.dataset.page !== name; });
     paintTaskSummary();
     $('[data-view="globalUpdate"]').hidden = !updateAttention || name === 'settings';
+    $('[data-view="globalRestore"]').hidden = !restoreLocked || name === 'cloud';
     if (focus) tab.focus({preventScroll:true});
     if (wasAbove) queueMicrotask(() => nav.scrollIntoView?.({block:'nearest',behavior:'auto'}));
   }
@@ -243,9 +247,14 @@ function mount() {
       event.preventDefault(); selectPage(tab.dataset.tab,{focus:true});
     }
   });
+  const restorer = mountRestore({panel,container:$('[data-view="restoreMount"]'),api,confirm:confirmUpload,notify,
+    getBusy:() => running || starting || loading || saving || listing || verifying || updateLocked,
+    getDirty:() => dirty,
+    onLock:value => { restoreLocked = value; if (value) concealPassword(); $('[data-view="globalRestore"]').hidden = !value || activePage === 'cloud'; paintDirty(); },
+  });
   let updater;
   updater = mountUpdates({panel,container:$('[data-view="updatesMount"]'),version:VERSION,moduleUrl:import.meta.url,api:hostApi,notify,confirm:confirmUpload,
-    getBusy:() => running || starting || loading || saving || listing || verifying || updateLocked,
+    getBusy:() => running || starting || loading || saving || listing || verifying || updateLocked || restoreLocked,
     getDirty:() => dirty,
     onUpdateState: state => {
       $('[data-view="versionSummary"]').textContent = '前端 ' + VERSION + ' · 后端 ' + (state.backendVersion || '未知') + (state.locked ? ' · 待重启或核实' : state.updating ? ' · 更新中' : state.mismatch ? ' · 不匹配' : '');
@@ -386,6 +395,7 @@ function mount() {
     $('[data-view="cloudList"]').replaceChildren(...cloudRows.slice(cloudPageIndex * CLOUD_PAGE_SIZE,(cloudPageIndex + 1) * CLOUD_PAGE_SIZE));
     $('[data-view="cloudPager"]').hidden = pages <= 1;
     $('[data-view="cloudPage"]').textContent = (cloudPageIndex + 1) + ' / ' + pages;
+    $('[data-view="snapshotCount"]').textContent = cloudRows.length + ' 个快照';
     $('[data-action="cloud-prev"]').disabled = listing || verifying || cloudPageIndex === 0;
     $('[data-action="cloud-next"]').disabled = listing || verifying || cloudPageIndex + 1 >= pages;
   }
@@ -424,7 +434,17 @@ function mount() {
         metadata.textContent = '大小：' + sizeText(file.bytes) + ' · 修改时间：' + (date && Number.isFinite(date.getTime()) ? date.toLocaleString() : '未知');
         const button = document.createElement('button'); button.type = 'button'; button.className = 'menu_button'; button.dataset.action = 'verify'; button.dataset.name = file.name; button.textContent = '检查大小'; button.setAttribute('aria-label', '检查大小：' + file.name);
         const details = document.createElement('p'); details.className = 'wd-verification'; details.dataset.fileVerification = ''; details.setAttribute('role', 'status'); details.hidden = true;
-        row.append(title, metadata, button, details); return row;
+        const collection = document.createElement('details'); collection.className = 'wd-snapshot-details';
+        const summary = document.createElement('summary');
+        const timestamp = document.createElement('span'); timestamp.className = 'wd-snapshot-time';
+        timestamp.textContent = date && Number.isFinite(date.getTime()) ? date.toLocaleString() : '时间未知';
+        const size = document.createElement('span'); size.className = 'wd-caption';
+        size.textContent = typeof file.bytes === 'number' && Number.isFinite(file.bytes) && file.bytes >= 0 ? (file.bytes / 1048576).toFixed(2) + ' MiB' : '大小未知';
+        summary.append(timestamp,size);
+        const restore = document.createElement('button'); restore.type = 'button'; restore.className = 'menu_button';
+        restore.dataset.action = 'restore-snapshot'; restore.dataset.name = file.name; restore.textContent = '恢复此快照';
+        const actions = document.createElement('div'); actions.className = 'wd-buttons'; actions.append(button,restore);
+        collection.append(summary,title,metadata,actions,details); row.append(collection); return row;
       });
       cloudRows = rows; cloudPageIndex = 0; renderCloudPage();
       cloudMessage((rows.length ? '已读取 ' + rows.length + ' 个备份文件。' : '当前目录未找到备份文件。') + (result.limited ? '列表已截断，仅显示部分文件。' : ''));
@@ -520,6 +540,7 @@ function mount() {
     passwordRevealSupported = c.capabilities?.passwordReveal === true; resetPassword(c.passwordSet);
     backendVersion = c.version; updateIdentity = c.updateIdentity;
     updateLocked = c.updatePending === true;
+    restorer.setConfig(c);
     invalidateCloud();
     $('[data-view="latestCheck"]').hidden = true;
     const box = $('.wd-categories'); box.replaceChildren();
@@ -586,6 +607,7 @@ function mount() {
     button.disabled = true;
     try {
       if (action === 'password-eye') { await togglePassword(); return; }
+      if (restoreLocked && action !== 'status') throw new Error('恢复准备或结果待核实，请先在云端恢复模块处理。');
       if (updateLocked && !['status','reload'].includes(action)) throw new Error('更新待应用或核实，请重启后端并重新加载页面后再操作');
       if (starting && action !== 'status') throw new Error('正在启动备份，请稍后再试');
       if (['save', 'reload'].includes(action) && (listing || verifying)) throw new Error('云端请求正在进行，请完成后再修改或读取配置');
@@ -594,6 +616,10 @@ function mount() {
         await load(); notify('已重新读取保存的配置与最近任务。', 'success', '配置已读取'); return;
       }
       if (action === 'status') { const s = await refreshStatus(); if (s) notify('已获取最新任务状态：' + (s.phase === 'uploaded' ? '上传完成，请查看校验结果' : s.phase === 'failed' ? '失败，请查看详情' : s.phase === 'idle' ? '空闲' : '请查看最近任务'), 'info', '状态已刷新'); return; }
+      if (action === 'restore-snapshot') {
+        if (!loaded || dirty || loading) throw new Error('请先完成配置读取并保存修改。');
+        restorer.open({name:button.dataset.name}); return;
+      }
       if (action === 'list' || action === 'verify' || action === 'verify-latest') {
         if (!loaded) throw new Error('请先点击重新读取配置，确认后端连接成功');
         if (dirty) throw new Error('表单有未保存修改，请先保存配置');
