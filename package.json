@@ -1,6 +1,7 @@
 {
   "name": "luker-webdav-backup",
   "version": "0.5.8",
+  "license": "MIT",
   "private": true,
   "description": "Development checks for the Luker WebDAV backup plugin",
   "scripts": {
