@@ -1,59 +1,513 @@
-/* WebDAV Backup 0.5.5. Scoped panel; drawer header inherits Luker's theme. */
-#luker-webdav-panel { margin: 0; min-width: 0; color: var(--SmartThemeBodyColor, inherit); }
+/* WebDAV Backup 0.5.6. Scoped panel; drawer header inherits Luker's theme. */
+#luker-webdav-panel {
+  --wd-accent: var(--SmartThemeQuoteColor, #7b9db8);
+  --wd-border: var(--SmartThemeBorderColor, #8886);
+  --wd-surface: color-mix(in srgb, var(--SmartThemeBodyColor, #888) 4%, transparent);
+  --wd-surface-strong: color-mix(in srgb, var(--SmartThemeBodyColor, #888) 8%, transparent);
+  --wd-muted: color-mix(in srgb, var(--SmartThemeBodyColor, #888) 68%, transparent);
+  --wd-warning: #b28a36;
+  --wd-error: #c65b52;
+  min-width: 0;
+  margin: 0;
+  color: var(--SmartThemeBodyColor, inherit);
+  font-family: inherit;
+}
 #luker-webdav-panel *, #luker-webdav-panel *::before, #luker-webdav-panel *::after { box-sizing: border-box; }
-#luker-webdav-panel .wd-body { display: flex; flex-direction: column; gap: 12px; padding: 10px 2px 14px; font-size: .92em; line-height: 1.5; }
-#luker-webdav-panel .wd-section { min-width: 0; margin: 0; padding: 12px; border: 1px solid var(--SmartThemeBorderColor, #8886); border-radius: 10px; background: color-mix(in srgb, var(--SmartThemeBodyColor, #888) 3%, transparent); }
-#luker-webdav-panel .wd-heading { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 10px; }
-#luker-webdav-panel .wd-heading h4 { font: inherit; font-weight: 650; margin: 0; padding: 0; border: 0; background: none; }
-#luker-webdav-panel .wd-caption, #luker-webdav-panel .wd-hint { font-size: .86em; opacity: .8; }
-#luker-webdav-panel .wd-hint { display: block; margin: 8px 0 0; line-height: 1.6; }
-#luker-webdav-panel .wd-fields { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 220px), 1fr)); gap: 10px; }
-#luker-webdav-panel .wd-field { display: flex; flex-direction: column; gap: 5px; min-width: 0; font-size: .92em; }
+#luker-webdav-panel [hidden] { display: none !important; }
+#luker-webdav-panel .wd-body {
+  container-name: wd-panel;
+  container-type: inline-size;
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 12px;
+  padding: 10px 2px 16px;
+  font-size: .92em;
+  line-height: 1.5;
+}
+#luker-webdav-panel .wd-body > * { min-width: 0; }
+
+/* Top-level navigation: four equal, compact tabs with a visible selected marker. */
+#luker-webdav-panel .wd-tabs {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 2px;
+  width: 100%;
+  min-width: 0;
+  margin: 0 0 2px;
+  padding: 3px;
+  border: 1px solid var(--wd-border);
+  border-radius: 9px;
+  background: color-mix(in srgb, var(--SmartThemeBodyColor, #888) 7%, transparent);
+}
+#luker-webdav-panel .wd-tab {
+  display: flex;
+  min-width: 0;
+  min-height: 44px;
+  align-items: center;
+  justify-content: center;
+  margin: 0;
+  padding: 8px 5px;
+  overflow: hidden;
+  border: 0;
+  border-bottom: 3px solid transparent;
+  border-radius: 6px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  font-size: .91em;
+  font-weight: 560;
+  line-height: 1.25;
+  text-align: center;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  cursor: pointer;
+}
+#luker-webdav-panel .wd-tab:hover { background: var(--wd-surface-strong); }
+#luker-webdav-panel .wd-tab[aria-selected="true"] {
+  border-bottom-color: var(--wd-accent);
+  background: color-mix(in srgb, var(--wd-accent) 12%, transparent);
+  font-weight: 700;
+  box-shadow: inset 0 -1px 0 color-mix(in srgb, var(--wd-accent) 42%, transparent);
+}
+#luker-webdav-panel .wd-tabpanel {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 12px;
+}
+
+/* Flat section hierarchy that leaves Luker's theme, typeface, and contrast in charge. */
+#luker-webdav-panel .wd-section {
+  min-width: 0;
+  margin: 0;
+  padding: 12px;
+  border: 1px solid var(--wd-border);
+  border-radius: 8px;
+  background: var(--wd-surface);
+}
+#luker-webdav-panel .wd-heading {
+  display: flex;
+  min-width: 0;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 7px 10px;
+  margin-bottom: 10px;
+}
+#luker-webdav-panel .wd-heading h4 {
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: none;
+  font: inherit;
+  font-weight: 700;
+  letter-spacing: .01em;
+}
+#luker-webdav-panel .wd-page-heading {
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--wd-border);
+}
+#luker-webdav-panel .wd-page-heading h4 { font-size: 1.08em; }
+#luker-webdav-panel .wd-caption,
+#luker-webdav-panel .wd-hint {
+  color: var(--wd-muted);
+  font-size: .86em;
+}
+#luker-webdav-panel .wd-caption { overflow-wrap: anywhere; }
+#luker-webdav-panel .wd-hint {
+  display: block;
+  min-width: 0;
+  margin: 8px 0 0;
+  line-height: 1.6;
+  overflow-wrap: anywhere;
+}
+#luker-webdav-panel .wd-fields {
+  display: grid;
+  min-width: 0;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 220px), 1fr));
+  gap: 10px;
+}
+#luker-webdav-panel .wd-field {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 5px;
+  font-size: .92em;
+}
 #luker-webdav-panel .wd-wide { grid-column: 1 / -1; }
-#luker-webdav-panel input.text_pole { width: 100%; min-width: 0; margin: 0; padding: 9px 10px; border-radius: 7px; font: inherit; }
-#luker-webdav-panel .wd-buttons { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
-#luker-webdav-panel .wd-body button { min-height: 36px; max-width: 100%; margin: 0; padding: 7px 10px; border-radius: 7px; font: inherit; font-size: .9em; white-space: normal; gap: 6px; }
+#luker-webdav-panel .wd-split {
+  display: grid;
+  min-width: 0;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 10px;
+}
+
+/* Keep form controls touch-friendly without forcing a second scroll region. */
+#luker-webdav-panel input.text_pole,
+#luker-webdav-panel select,
+#luker-webdav-panel textarea {
+  width: 100%;
+  min-width: 0;
+  min-height: 44px;
+  margin: 0;
+  padding: 9px 10px;
+  border-radius: 7px;
+  font: inherit;
+}
+#luker-webdav-panel textarea { resize: vertical; }
+#luker-webdav-panel .wd-password {
+  display: flex;
+  min-width: 0;
+  align-items: stretch;
+  gap: 6px;
+}
+#luker-webdav-panel .wd-password input { flex: 1 1 auto; min-width: 0; }
+#luker-webdav-panel .wd-password button {
+  flex: 0 0 44px;
+  width: 44px;
+  min-width: 44px;
+  padding: 0;
+}
+#luker-webdav-panel .wd-buttons {
+  display: flex;
+  min-width: 0;
+  flex-wrap: wrap;
+  gap: 7px;
+  margin-top: 10px;
+}
+#luker-webdav-panel .wd-body button {
+  min-width: 0;
+  min-height: 44px;
+  max-width: 100%;
+  margin: 0;
+  padding: 8px 11px;
+  border-radius: 7px;
+  font: inherit;
+  font-size: .9em;
+  line-height: 1.25;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
 #luker-webdav-panel .wd-body button:disabled { opacity: .5; cursor: wait; }
-#luker-webdav-panel :is(button, input, summary, [role="button"]):focus-visible { outline: 2px solid var(--SmartThemeQuoteColor, #7b9db8); outline-offset: 3px; }
-#luker-webdav-panel .wd-categories { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 145px), 1fr)); gap: 6px; }
-#luker-webdav-panel .wd-categories label { display: flex; align-items: center; gap: 7px; min-width: 0; min-height: 38px; padding: 7px 8px; border: 1px solid transparent; border-radius: 7px; font-size: .9em; cursor: pointer; overflow-wrap: anywhere; }
-#luker-webdav-panel .wd-categories label:has(input:checked) { border-color: var(--SmartThemeBorderColor, #8886); background: color-mix(in srgb, var(--SmartThemeQuoteColor, #7b9db8) 10%, transparent); }
-#luker-webdav-panel .wd-categories input { flex: 0 0 auto; margin: 0; }
+#luker-webdav-panel .wd-tabs .wd-tab { white-space: nowrap; }
+#luker-webdav-panel :is(button, input, select, textarea, summary, [role="button"]):focus-visible {
+  outline: 2px solid var(--wd-accent);
+  outline-offset: 3px;
+}
+#luker-webdav-panel .wd-primary {
+  width: 100%;
+  min-height: 46px !important;
+  border-color: var(--wd-accent);
+  background: color-mix(in srgb, var(--wd-accent) 18%, var(--SmartThemeBlurTintColor, transparent));
+  font-weight: 700 !important;
+}
+
+/* Compact destination, status, and risk summaries used across the tabs. */
+#luker-webdav-panel .wd-overview {
+  display: grid;
+  min-width: 0;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 4px 12px;
+  padding: 10px 12px;
+  border-inline-start: 3px solid var(--wd-accent);
+  border-radius: 7px;
+  background: var(--wd-surface);
+}
+#luker-webdav-panel .wd-summary-label {
+  color: var(--wd-muted);
+  font-size: .82em;
+  font-weight: 650;
+  letter-spacing: .02em;
+  text-transform: uppercase;
+}
+#luker-webdav-panel .wd-summary-value,
+#luker-webdav-panel .wd-inline-link {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+#luker-webdav-panel .wd-summary-value { font-weight: 650; }
+#luker-webdav-panel .wd-overview .wd-heading { margin: 0; }
+#luker-webdav-panel .wd-overview .wd-notes { margin: 0; }
+#luker-webdav-panel .wd-overview .wd-destination > summary { color: inherit; font-size: 1em; }
+#luker-webdav-panel .wd-overview .wd-connection-state { padding: 0; border: 0; background: none; color: var(--wd-muted); font-size: .86em; }
+#luker-webdav-panel .wd-scope > summary > .wd-inline-link { min-height: 0; padding: 0; margin-inline-start: auto; }
+#luker-webdav-panel :is(.wd-scope, .wd-updates-details, .wd-about, .wd-notes) > summary::after { content: '+'; margin-inline-start: auto; flex: 0 0 auto; color: var(--wd-accent); font-weight: 650; }
+#luker-webdav-panel :is(.wd-scope, .wd-updates-details, .wd-about, .wd-notes)[open] > summary::after { content: '−'; }
+#luker-webdav-panel .wd-inline-link {
+  display: inline-flex;
+  min-height: 44px;
+  align-items: center;
+  justify-content: center;
+  padding: 6px 8px;
+  border-color: transparent;
+  background: transparent;
+  color: var(--wd-accent);
+  font-weight: 650;
+  text-decoration: underline;
+  text-decoration-thickness: 1px;
+  text-underline-offset: 2px;
+}
+#luker-webdav-panel .wd-inline-link:hover { background: var(--wd-surface-strong); }
+#luker-webdav-panel .wd-scope,
+#luker-webdav-panel .wd-updates-details,
+#luker-webdav-panel .wd-about {
+  min-width: 0;
+  border-top: 1px solid var(--wd-border);
+}
+#luker-webdav-panel .wd-scope > summary,
+#luker-webdav-panel .wd-updates-details > summary,
+#luker-webdav-panel .wd-about > summary,
+#luker-webdav-panel .wd-notes > summary {
+  display: flex;
+  min-width: 0;
+  min-height: 44px;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 2px;
+  cursor: pointer;
+  list-style-position: inside;
+}
+#luker-webdav-panel .wd-scope-heading {
+  display: flex;
+  min-width: 0;
+  flex: 1 1 auto;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 4px 10px;
+}
+#luker-webdav-panel .wd-scope-heading > * { min-width: 0; }
+#luker-webdav-panel .wd-risk,
+#luker-webdav-panel .wd-connection-state {
+  min-width: 0;
+  padding: 8px 10px;
+  border-inline-start: 3px solid var(--wd-accent);
+  border-radius: 4px;
+  background: var(--wd-surface);
+  overflow-wrap: anywhere;
+}
+#luker-webdav-panel .wd-risk[data-tone="warning"],
+#luker-webdav-panel .wd-connection-state[data-tone="warning"] {
+  border-inline-start-color: var(--wd-warning);
+  background: color-mix(in srgb, var(--wd-warning) 10%, transparent);
+}
+#luker-webdav-panel .wd-risk[data-tone="error"],
+#luker-webdav-panel .wd-connection-state[data-tone="error"] {
+  border-inline-start-color: var(--wd-error);
+  background: color-mix(in srgb, var(--wd-error) 10%, transparent);
+}
+#luker-webdav-panel .wd-global-status {
+  display: flex;
+  min-width: 0;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  border-inline-start: 3px solid var(--wd-accent);
+  border-radius: 6px;
+  background: var(--wd-surface);
+}
+#luker-webdav-panel .wd-global-status[data-tone="active"] { border-inline-start-color: var(--wd-accent); }
+#luker-webdav-panel .wd-global-status[data-tone="warning"] {
+  border-inline-start-color: var(--wd-warning);
+  background: color-mix(in srgb, var(--wd-warning) 10%, transparent);
+}
+#luker-webdav-panel .wd-global-status[data-tone="error"] {
+  border-inline-start-color: var(--wd-error);
+  background: color-mix(in srgb, var(--wd-error) 10%, transparent);
+}
+#luker-webdav-panel .wd-global-status > * { min-width: 0; }
+#luker-webdav-panel .wd-dirty {
+  display: flex;
+  min-width: 0;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 10px;
+  padding: 9px 10px;
+  border-inline-start: 3px solid var(--wd-warning);
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--wd-warning) 11%, transparent);
+}
+#luker-webdav-panel .wd-dirty > * { min-width: 0; }
+#luker-webdav-panel .wd-task-summary {
+  display: flex;
+  width: 100%;
+  min-width: 0;
+  min-height: 44px;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 5px 10px;
+  padding: 8px 10px;
+  border: 1px solid var(--wd-border);
+  border-radius: 7px;
+  background: var(--wd-surface);
+  color: inherit;
+  font: inherit;
+  text-align: start;
+  text-decoration: none;
+  cursor: pointer;
+}
+#luker-webdav-panel .wd-task-summary:hover { background: var(--wd-surface-strong); }
+#luker-webdav-panel .wd-task-summary > * { min-width: 0; overflow-wrap: anywhere; }
+
+#luker-webdav-panel .wd-message {
+  min-width: 0;
+  margin: 0;
+  padding: 9px 10px;
+  border-inline-start: 3px solid var(--wd-accent);
+  border-radius: 5px;
+  background: var(--wd-surface);
+  font-size: .9em;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+#luker-webdav-panel .wd-message[data-tone="warning"] { border-inline-start-color: var(--wd-warning); background: color-mix(in srgb, var(--wd-warning) 9%, transparent); }
+#luker-webdav-panel .wd-message[data-tone="error"] { border-inline-start-color: var(--wd-error); background: color-mix(in srgb, var(--wd-error) 9%, transparent); }
+#luker-webdav-panel .wd-status-line { display: flex; min-width: 0; flex-wrap: wrap; align-items: center; gap: 8px; }
+#luker-webdav-panel .wd-badge {
+  display: inline-flex;
+  min-width: 0;
+  min-height: 30px;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 8px;
+  border: 1px solid var(--wd-border);
+  border-radius: 6px;
+  background: var(--wd-surface-strong);
+  font-size: .9em;
+  font-weight: 650;
+  overflow-wrap: anywhere;
+}
+#luker-webdav-panel .wd-badge::before { content: ''; width: 7px; height: 7px; flex: 0 0 7px; border-radius: 50%; background: currentColor; }
+#luker-webdav-panel .wd-badge[data-tone="active"] { border-color: var(--wd-accent); }
+#luker-webdav-panel .wd-badge[data-tone="warning"] { border-color: var(--wd-warning); }
+#luker-webdav-panel .wd-badge[data-tone="error"] { border-color: var(--wd-error); }
+#luker-webdav-panel .wd-verification {
+  min-width: 0;
+  margin: 10px 0 0;
+  font-size: .9em;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+#luker-webdav-panel .wd-verification[data-tone="warning"],
+#luker-webdav-panel .wd-verification[data-tone="error"] {
+  padding: 8px 10px;
+  border-inline-start: 3px solid var(--wd-warning);
+  border-radius: 4px;
+  background: color-mix(in srgb, var(--wd-warning) 10%, transparent);
+}
+#luker-webdav-panel .wd-verification[data-tone="error"] { border-inline-start-color: var(--wd-error); background: color-mix(in srgb, var(--wd-error) 10%, transparent); }
+
+#luker-webdav-panel .wd-categories {
+  display: grid;
+  min-width: 0;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 6px;
+}
+#luker-webdav-panel .wd-categories label {
+  display: flex;
+  min-width: 0;
+  min-height: 44px;
+  align-items: center;
+  gap: 7px;
+  padding: 8px;
+  border: 1px solid transparent;
+  border-radius: 7px;
+  font-size: .9em;
+  cursor: pointer;
+  overflow-wrap: anywhere;
+}
+#luker-webdav-panel .wd-categories label:hover { background: var(--wd-surface); }
+#luker-webdav-panel .wd-categories label:has(input:checked) {
+  border-color: var(--wd-border);
+  background: color-mix(in srgb, var(--wd-accent) 10%, transparent);
+}
+#luker-webdav-panel .wd-categories input { flex: 0 0 auto; width: 17px; height: 17px; margin: 0; }
 #luker-webdav-panel .wd-select-tools { margin: 8px 0 0; }
-#luker-webdav-panel .wd-notes { margin: 10px 0 0; padding: 0; border: 0; background: none; }
-#luker-webdav-panel .wd-notes > summary { cursor: pointer; padding: 3px 0; font-size: .86em; opacity: .85; }
-#luker-webdav-panel .wd-primary { width: 100%; min-height: 42px !important; font-weight: 650 !important; border-color: var(--SmartThemeQuoteColor, #7b9db8); background: color-mix(in srgb, var(--SmartThemeQuoteColor, #7b9db8) 18%, var(--SmartThemeBlurTintColor, transparent)); }
-#luker-webdav-panel .wd-message { margin: 0; padding: 8px 10px; border-radius: 7px; background: color-mix(in srgb, var(--SmartThemeBodyColor, #888) 5%, transparent); font-size: .9em; white-space: pre-wrap; overflow-wrap: anywhere; }
-#luker-webdav-panel .wd-message[data-tone="error"] { border-inline-start: 3px solid #c65b52; }
-#luker-webdav-panel .wd-status-line { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
-#luker-webdav-panel .wd-badge { display: inline-flex; align-items: center; gap: 6px; padding: 4px 8px; border-radius: 6px; background: color-mix(in srgb, var(--SmartThemeBodyColor, #888) 8%, transparent); font-size: .9em; font-weight: 600; }
-#luker-webdav-panel .wd-badge::before { content: ''; width: 7px; height: 7px; border-radius: 50%; background: currentColor; }
-#luker-webdav-panel .wd-badge[data-tone="active"] { border: 1px solid var(--SmartThemeQuoteColor, #7b9db8); }
-#luker-webdav-panel .wd-badge[data-tone="warning"] { border: 1px solid #b28a36; }
-#luker-webdav-panel .wd-badge[data-tone="error"] { border: 1px solid #c65b52; }
-#luker-webdav-panel .wd-verification { margin: 10px 0 0; font-size: .9em; overflow-wrap: anywhere; white-space: pre-wrap; }
-#luker-webdav-panel .wd-verification[data-tone="warning"], #luker-webdav-panel .wd-verification[data-tone="error"] { padding: 8px 10px; border-inline-start: 3px solid #b28a36; background: color-mix(in srgb, #b28a36 10%, transparent); border-radius: 3px; }
-#luker-webdav-panel .wd-metadata { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 7px 12px; margin: 10px 0 0; font-size: .86em; }
-#luker-webdav-panel .wd-metadata dt { opacity: .7; }
-#luker-webdav-panel .wd-metadata dd { margin: 0; overflow-wrap: anywhere; white-space: pre-wrap; user-select: text; }
-#luker-webdav-panel .wd-directory-hint { border-inline-start: 2px solid var(--SmartThemeQuoteColor, #7b9db8); padding-inline-start: 8px; }
-#luker-webdav-panel .wd-task-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 6px; }
-#luker-webdav-panel .wd-cloud-list { display: flex; flex-direction: column; gap: 8px; margin-top: 10px; }
-#luker-webdav-panel .wd-cloud-file { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 4px 10px; min-width: 0; padding: 10px; border: 1px solid var(--SmartThemeBorderColor, #8886); border-radius: 8px; background: color-mix(in srgb, var(--SmartThemeBodyColor, #888) 3%, transparent); }
-#luker-webdav-panel .wd-file-name { min-width: 0; font-weight: 600; overflow-wrap: anywhere; word-break: break-word; }
+#luker-webdav-panel .wd-notes,
+#luker-webdav-panel .wd-about { margin: 10px 0 0; padding: 0; }
+#luker-webdav-panel .wd-notes > summary { color: var(--wd-muted); font-size: .86em; }
+#luker-webdav-panel .wd-metadata {
+  display: grid;
+  min-width: 0;
+  grid-template-columns: minmax(7em, auto) minmax(0, 1fr);
+  gap: 7px 12px;
+  margin: 10px 0 0;
+  font-size: .86em;
+}
+#luker-webdav-panel .wd-metadata dt { min-width: 0; color: var(--wd-muted); overflow-wrap: anywhere; }
+#luker-webdav-panel .wd-metadata dd { min-width: 0; margin: 0; overflow-wrap: anywhere; white-space: pre-wrap; user-select: text; }
+#luker-webdav-panel .wd-directory-hint { border-inline-start: 2px solid var(--wd-accent); padding-inline-start: 8px; }
+#luker-webdav-panel .wd-task-actions { display: flex; min-width: 0; flex-wrap: wrap; justify-content: flex-end; gap: 7px; }
+
+/* Cloud files and pagination stay in normal flow; no nested scrolling or fixed action bars. */
+#luker-webdav-panel .wd-cloud-pager {
+  display: flex;
+  min-width: 0;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+#luker-webdav-panel .wd-cloud-pager > * { min-width: 0; }
+#luker-webdav-panel .wd-cloud-list { display: flex; min-width: 0; flex-direction: column; gap: 8px; margin-top: 10px; }
+#luker-webdav-panel .wd-cloud-file {
+  display: grid;
+  min-width: 0;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 4px 10px;
+  padding: 10px;
+  border: 1px solid var(--wd-border);
+  border-radius: 7px;
+  background: var(--wd-surface);
+}
+#luker-webdav-panel .wd-file-name { min-width: 0; font-weight: 650; overflow-wrap: anywhere; word-break: break-word; }
 #luker-webdav-panel .wd-cloud-file > .wd-caption { min-width: 0; overflow-wrap: anywhere; }
 #luker-webdav-panel .wd-cloud-file > button { grid-column: 2; grid-row: 1 / span 2; align-self: center; }
 #luker-webdav-panel .wd-cloud-file > [data-file-verification] { grid-column: 1 / -1; margin: 4px 0 0; }
 #luker-webdav-panel .wd-cloud-file .wd-verification { font-size: .86em; }
-#luker-webdav-panel [data-view="styleWarning"] { margin: 0; padding: 8px 10px; border-inline-start: 3px solid #c65b52; border-radius: 3px; background: color-mix(in srgb, #c65b52 10%, transparent); font-size: .88em; }
-#luker-webdav-panel [hidden] { display: none !important; }
-#luker-webdav-panel .wd-update-notice { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 0 0 10px; padding: 10px; border: 1px solid #b28a36; border-radius: 7px; background: color-mix(in srgb, #b28a36 16%, transparent); font-size: .9em; }
-#luker-webdav-panel .wd-update-notice span { flex: 1 1 150px; min-width: 0; font-weight: 600; overflow-wrap: anywhere; }
+#luker-webdav-panel [data-view="styleWarning"] {
+  min-width: 0;
+  margin: 0;
+  padding: 8px 10px;
+  border-inline-start: 3px solid var(--wd-error);
+  border-radius: 4px;
+  background: color-mix(in srgb, var(--wd-error) 10%, transparent);
+  font-size: .88em;
+  overflow-wrap: anywhere;
+}
+#luker-webdav-panel .wd-update-notice {
+  display: flex;
+  min-width: 0;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin: 0 0 10px;
+  padding: 10px;
+  border: 1px solid var(--wd-warning);
+  border-radius: 7px;
+  background: color-mix(in srgb, var(--wd-warning) 14%, transparent);
+  font-size: .9em;
+}
+#luker-webdav-panel .wd-update-notice span { min-width: 0; flex: 1 1 150px; font-weight: 650; overflow-wrap: anywhere; }
 #luker-webdav-panel .wd-update-notice button { flex: 0 0 auto; }
-#luker-webdav-panel .wd-update-notice button[aria-label="关闭更新提示"] { min-width: 36px; padding-inline: 8px; font-size: 1.1em; }
+#luker-webdav-panel .wd-update-notice button[aria-label="关闭更新提示"] { min-width: 44px; padding-inline: 8px; font-size: 1.1em; }
+
+/* Container queries use the actual available panel width, so zoomed/narrow hosts fall back cleanly. */
+@container wd-panel (min-width: 20em) {
+  #luker-webdav-panel .wd-categories { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+@container wd-panel (min-width: 540px) {
+  #luker-webdav-panel .wd-split { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
 @media (max-width: 380px) {
   #luker-webdav-panel .wd-section { padding: 10px; }
-  #luker-webdav-panel .wd-categories { grid-template-columns: 1fr; }
   #luker-webdav-panel .wd-cloud-file { grid-template-columns: minmax(0, 1fr); }
   #luker-webdav-panel .wd-cloud-file > button { grid-column: 1; grid-row: auto; justify-self: start; }
+  #luker-webdav-panel .wd-metadata { grid-template-columns: minmax(0, 1fr); gap: 2px; }
+  #luker-webdav-panel .wd-metadata dd { margin-bottom: 5px; }
 }

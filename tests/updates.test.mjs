@@ -12,7 +12,9 @@ function setup(t,options={}) {
   t.after(()=>dom.window.close()); const w=dom.window;
   Object.assign(w,{AbortController,TextDecoder,TextEncoder,Uint8Array});
   w.eval(source+'\nglobalThis.mountUpdates=mountUpdates;');
-  const h={calls:[],fetches:[],notices:[],available:[],locks:[],confirmations:[],allow:true,busy:false,dirty:false};
+  const h={calls:[],fetches:[],notices:[],available:[],locks:[],states:[],confirmations:[],allow:true,busy:false,dirty:false};
+  h.panel=w.document.querySelector('#panel');
+  if(options.mountIntoSettings){h.container=w.document.createElement('div');h.panel.append(h.container);}
   h.discovery=[{name:'third-party/client-folder',type:'global'}];
   h.plugins=[{directory:'backend-folder',remoteUrl:repo,version:'0.5.4'}];
   h.version={remoteUrl:repo,currentBranchName:'main',currentCommitHash:'abc1234',isUpToDate:true};
@@ -34,13 +36,34 @@ function setup(t,options={}) {
     if(options.fetchError)throw Error('offline');
     return new Response(options.manifest || JSON.stringify({version:options.latest || '0.5.5'}),{status:200});
   };
-  h.controller=w.mountUpdates({panel:w.document.querySelector('#panel'),version:'0.5.4',moduleUrl:options.moduleUrl || 'https://luker.test/scripts/extensions/third-party/client-folder/frontend.js',api:h.api,fetchImpl,
-    notify:(...args)=>h.notices.push(args),onUpdateAvailable:info=>h.available.push(info),confirm:async text=>{h.confirmations.push(text);return h.allow;},getBusy:()=>h.busy,getDirty:()=>h.dirty,onLock:value=>h.locks.push(value)});
+  h.controller=w.mountUpdates({panel:h.panel,container:h.container,version:'0.5.4',moduleUrl:options.moduleUrl || 'https://luker.test/scripts/extensions/third-party/client-folder/frontend.js',api:h.api,fetchImpl,
+    notify:(...args)=>h.notices.push(args),onUpdateState:state=>h.states.push(state),onUpdateAvailable:info=>h.available.push(info),confirm:async text=>{h.confirmations.push(text);return h.allow;},getBusy:()=>h.busy,getDirty:()=>h.dirty,onLock:value=>h.locks.push(value)});
   h.view=name=>w.document.querySelector('[data-update="'+name+'"]');
   h.load=async()=>{h.controller.setConfig(h.config);await tick();};
   h.mutations=()=>h.calls.filter(c=>c.route.endsWith('/update'));
   return h;
 }
+
+test('optional settings mount keeps updates scoped and publishes local state transitions',async t=>{
+  const h=setup(t,{mountIntoSettings:true});await h.load();
+  assert.ok(h.container.querySelector('[data-updates]'));
+  assert.equal(h.panel.querySelector('.wd-body [data-updates]'),null);
+  assert.ok(h.states.some(state=>state.checking));
+  assert.equal(h.states.at(-1).canUpdate,true);
+  await h.controller.install();
+  assert.ok(h.states.some(state=>state.updating));
+  assert.equal(h.states.at(-1).locked,true);
+  assert.match(h.states.at(-1).result,/重启/);
+  assert.throws(()=>h.container.ownerDocument.defaultView.mountUpdates({panel:h.panel,container:h.container.ownerDocument.createElement('div')}),/挂载位置/);
+});
+
+test('pending restart loaded from config cannot replay either update step',async t=>{
+  const h=setup(t);h.config.updatePending=true;await h.load();
+  assert.equal(h.controller.getState().locked,true);
+  assert.equal(h.view('install').disabled,true);
+  await h.controller.install();assert.equal(h.mutations().length,0);
+  assert.equal(h.fetches.length,0);
+});
 
 test('mismatch is local; auto check is read-only once and distinguishes latest from running versions',async t=>{
   const h=setup(t);h.config.version='0.5.3';await h.load();

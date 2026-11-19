@@ -2,7 +2,7 @@ import {mountUpdates} from './updates.js';
 // In-app companion for the WebDAV Backup server plugin (loaded as an ES module).
 const ROOT = '/api/plugins/webdav-backup';
 const ID = 'luker-webdav-panel';
-const VERSION = '0.5.5';
+const VERSION = '0.5.6';
 const LONG_ROUTES = new Set(['/test', '/backups', '/verify']);
 const ctx = () => (globalThis.Luker || globalThis.SillyTavern).getContext();
 let popupQueue = Promise.resolve();
@@ -109,43 +109,59 @@ function mount() {
 </div>
 <div class="inline-drawer-content" id="luker-webdav-content"><div class="wd-body">
 <p data-view="styleWarning" role="status" hidden>样式加载失败，请检查扩展是否包含 style.css 并重新加载页面；重新展开面板会重试。</p>
+<div class="wd-tabs" role="tablist" aria-label="WebDAV 板块">
+<button type="button" class="wd-tab" id="wd-tab-backup" role="tab" aria-selected="true" aria-controls="wd-page-backup" tabindex="0" data-tab="backup">备份</button>
+<button type="button" class="wd-tab" id="wd-tab-task" role="tab" aria-selected="false" aria-controls="wd-page-task" tabindex="-1" data-tab="task">任务</button>
+<button type="button" class="wd-tab" id="wd-tab-cloud" role="tab" aria-selected="false" aria-controls="wd-page-cloud" tabindex="-1" data-tab="cloud">云端</button>
+<button type="button" class="wd-tab" id="wd-tab-settings" role="tab" aria-selected="false" aria-controls="wd-page-settings" tabindex="-1" data-tab="settings">设置</button>
+</div>
+<div class="wd-global-status" data-view="globalTask" hidden><span data-view="globalTaskText" role="status"></span><button type="button" class="wd-inline-link" data-nav="task">查看任务</button></div>
+<div class="wd-global-status" data-view="globalUpdate" hidden><span data-view="globalUpdateText" role="status"></span><button type="button" class="wd-inline-link" data-nav="settings">查看更新</button></div>
+<div class="wd-dirty" data-view="dirty" hidden><span role="status">有未保存更改</span><button type="button" class="menu_button" data-action="save">保存更改</button></div>
+<p class="wd-message" data-view="message" role="status" hidden></p>
+<section class="wd-tabpanel" id="wd-page-backup" role="tabpanel" aria-labelledby="wd-tab-backup" tabindex="0" data-page="backup">
+<div class="wd-overview"><div class="wd-heading"><span class="wd-summary-label">备份目标</span><button type="button" class="wd-inline-link" data-nav="settings">修改连接</button></div><details class="wd-notes wd-destination"><summary aria-label="展开完整备份目录"><strong class="wd-summary-value" data-view="destination">读取已保存的目标…</strong></summary><p class="wd-hint" data-view="destinationFull"></p></details><span class="wd-connection-state" data-view="connectionState">尚未读取</span></div>
+<details class="wd-scope" data-view="scope"><summary><span class="wd-scope-heading">备份范围</span><span class="wd-caption" data-view="selectionCount">等待读取</span><span class="wd-inline-link">调整分类</span></summary>
+<div class="wd-categories"></div>
+<div class="wd-buttons wd-select-tools"><button type="button" class="menu_button" data-action="defaults">默认分类</button><button type="button" class="menu_button" data-action="all">全选（含密钥）</button></div>
+<details class="wd-notes"><summary>备份范围说明</summary><small class="wd-hint">全选仅覆盖 Luker 原生支持的分类，不包含服务端插件、APK 或整套运行环境；独立 Skills/CardApp 等是否覆盖取决于宿主版本。恢复全局前端扩展时需在 Luker 备份恢复中以管理员身份选择该分类；服务端插件需单独安装。</small></details>
+</details>
+<p class="wd-risk" data-view="secretsWarning" hidden>已选择 API 密钥 / 机密，请使用私有目录。</p>
+<p class="wd-risk" data-view="databaseWarning" hidden>数据库模式：导出可能包含未勾选分类的数据及 API 密钥。</p>
+<div><button type="button" class="menu_button wd-primary" data-action="backup"><i class="fa-solid fa-cloud-arrow-up" aria-hidden="true"></i>备份到 WebDAV</button><small class="wd-hint">先结束生成和编辑。ZIP 未加密；上传前会确认目标与分类。</small></div>
+<button type="button" class="wd-task-summary" data-nav="task"><span class="wd-summary-label">最近任务 · 查看详情</span><span data-view="taskSummary">尚未查询</span></button>
+</section>
+<section class="wd-tabpanel" id="wd-page-task" role="tabpanel" aria-labelledby="wd-tab-task" tabindex="0" data-page="task" hidden>
+<div class="wd-heading wd-page-heading"><h4>最近任务</h4><button type="button" class="menu_button" data-action="status" aria-label="刷新任务状态">刷新状态</button></div>
+<div class="wd-status-line" role="status"><span class="wd-badge" data-view="phase">尚未查询</span><span class="wd-caption" data-view="bytes"></span></div>
+<p class="wd-verification" data-view="verification" role="status" hidden></p>
+<div class="wd-task-actions"><button type="button" class="menu_button" data-action="verify-latest" hidden>重新检查大小</button></div>
+<p class="wd-verification" data-view="latestCheck" role="status" hidden></p>
+<details class="wd-notes"><summary>任务详情</summary><dl class="wd-metadata" data-view="metadata"></dl></details>
+<small class="wd-hint">运行时自动刷新；切换板块或收起面板不影响任务。请保持 Luker 后端运行。</small>
+</section>
+<section class="wd-tabpanel" id="wd-page-cloud" role="tabpanel" aria-labelledby="wd-tab-cloud" tabindex="0" data-page="cloud" hidden>
+<div class="wd-heading wd-page-heading"><h4>云端备份</h4><button type="button" class="menu_button" data-action="list">刷新列表</button></div>
+<p class="wd-hint" data-view="cloudDestination">尚未读取保存的目录</p>
+<p class="wd-message" data-view="cloudMessage" role="status">尚未读取云端列表</p>
+<div class="wd-cloud-list" data-view="cloudList" role="list" aria-label="云端备份文件"></div>
+<div class="wd-cloud-pager" data-view="cloudPager" hidden><button type="button" class="menu_button" data-action="cloud-prev">上一页</button><span data-view="cloudPage" role="status"></span><button type="button" class="menu_button" data-action="cloud-next">下一页</button></div>
+<small class="wd-hint">仅手动读取已保存的目录；检查大小不验证 ZIP 内容完整性或能否恢复。</small>
+</section>
+<section class="wd-tabpanel" id="wd-page-settings" role="tabpanel" aria-labelledby="wd-tab-settings" tabindex="0" data-page="settings" hidden>
 <section class="wd-section" aria-label="连接配置">
-<div class="wd-heading"><h4>连接配置</h4><span class="wd-caption">WebDAV 云端备份</span></div>
+<div class="wd-heading wd-page-heading"><h4>连接配置</h4><span class="wd-caption">HTTPS · WebDAV</span></div>
 <div class="wd-fields">
 <label class="wd-field wd-wide">HTTPS 目录地址<input class="text_pole" data-field="url" type="url" spellcheck="false" autocapitalize="off" placeholder="https://dav.jianguoyun.com/dav/LukerBackup/"></label>
 <label class="wd-field">用户名<input class="text_pole" data-field="username" autocomplete="off" autocapitalize="off" spellcheck="false"></label>
 <div class="wd-field"><label for="luker-webdav-password">应用密码</label><div class="wd-password"><input id="luker-webdav-password" class="text_pole" data-field="password" type="password" autocomplete="new-password" placeholder="留空保留已保存的密码"><button type="button" class="menu_button" data-action="password-eye" aria-label="显示密码" aria-pressed="false" title="显示密码"><i class="fa-solid fa-eye" aria-hidden="true"></i></button></div><small class="wd-hint" data-view="passwordState">尚未读取密码状态</small></div>
 </div>
-<small class="wd-hint">边生成 ZIP 边上传，不保存本地完整 ZIP；服务须支持未知长度的流式上传。</small>
-<small class="wd-hint wd-directory-hint">测试连接或开始备份时，会自动创建缺失的目标及中间目录；需要可用的 WebDAV 根目录和创建权限。坚果云 /dav/ 根地址保存后会改为 /dav/LukerBackup/。</small>
 <small class="wd-hint" data-view="configState">展开后读取已保存的配置</small>
 <div class="wd-buttons"><button type="button" class="menu_button" data-action="save">保存配置</button><button type="button" class="menu_button" data-action="test">测试连接</button><button type="button" class="menu_button" data-action="reload">重新读取</button></div>
 </section>
-<section class="wd-section" aria-label="备份内容">
-<div class="wd-heading"><h4>备份内容</h4><span class="wd-caption" data-view="selectionCount">等待读取</span></div>
-<div class="wd-categories"></div>
-<div class="wd-buttons wd-select-tools"><button type="button" class="menu_button" data-action="defaults">默认分类</button><button type="button" class="menu_button" data-action="all">全选（含密钥）</button></div>
-<small class="wd-hint" data-view="databaseWarning" hidden>数据库模式：导出可能包含未勾选分类的数据及 API 密钥。</small>
-<details class="wd-notes"><summary>备份范围说明</summary><small class="wd-hint">全选仅覆盖 Luker 原生支持的分类，不包含服务端插件、APK 或整套运行环境；独立 Skills/CardApp 等是否覆盖取决于宿主版本。数据库导出可能包含分类之外的数据及机密，即使未勾选 API 密钥。恢复时需以管理员身份在 Luker 备份恢复中勾选“全局前端扩展”；服务端插件需单独安装。</small></details>
+<details class="wd-updates-details" data-view="updatesDetails"><summary>版本与更新 <span class="wd-caption" data-view="versionSummary">前端 0.5.6</span></summary><div data-view="updatesMount"></div></details>
+<details class="wd-about"><summary>使用说明与关于 · 0.5.6</summary><small class="wd-hint">仅使用流式上传：边生成 ZIP 边上传，不创建本地完整 ZIP。服务须支持未知长度上传。</small><small class="wd-hint wd-directory-hint">测试连接或开始备份时，会自动创建缺失的目标及中间目录；需要可用的 WebDAV 根目录和创建权限。坚果云 /dav/ 根地址保存后会改为 /dav/LukerBackup/。</small><small class="wd-hint">本扩展不提供恢复、删除或下载备份操作；大小一致不代表内容完整或可恢复。</small></details>
 </section>
-<div><button type="button" class="menu_button wd-primary" data-action="backup"><i class="fa-solid fa-cloud-arrow-up" aria-hidden="true"></i>备份到 WebDAV</button>
-<small class="wd-hint">先结束生成和编辑。上传前会确认目标及分类；ZIP 未加密，请使用私有目录。</small></div>
-<p class="wd-message" data-view="message" role="status">准备就绪</p>
-<section class="wd-section" aria-label="最近任务">
-<div class="wd-heading"><h4>最近任务</h4><div class="wd-task-actions"><button type="button" class="menu_button" data-action="verify-latest" hidden>重新检查大小</button><button type="button" class="menu_button" data-action="status" aria-label="刷新任务状态">刷新状态</button></div></div>
-<div class="wd-status-line" role="status"><span class="wd-badge" data-view="phase">尚未查询</span><span class="wd-caption" data-view="bytes"></span></div>
-<p class="wd-verification" data-view="verification" role="status" hidden></p>
-<p class="wd-verification" data-view="latestCheck" role="status" hidden></p>
-<details class="wd-notes"><summary>任务详情</summary><dl class="wd-metadata" data-view="metadata"></dl></details>
-<small class="wd-hint">运行时自动刷新。关闭面板不影响任务，请保持 Luker 后端运行。</small>
-</section>
-<section class="wd-section" aria-label="云端备份">
-<div class="wd-heading"><h4>云端备份</h4><button type="button" class="menu_button" data-action="list">刷新云端列表</button></div>
-<small class="wd-hint">读取已保存的 WebDAV 目录，仅手动刷新。大小检查不验证 ZIP 内容完整性，也不验证能否恢复。</small>
-<p class="wd-message" data-view="cloudMessage" role="status">尚未读取云端列表</p>
-<div class="wd-cloud-list" data-view="cloudList" role="list" aria-label="云端备份文件"></div>
-</section>
-<details class="wd-notes"><summary>关于此扩展 · 0.5.5</summary><small class="wd-hint">仅使用流式上传，边生成边上传，不创建本地 ZIP。自动创建目录需要 0.4.0 后端。本扩展不提供恢复、删除或下载备份操作；大小一致不代表内容完整或可恢复。</small></details>
 </div></div></div>`;
   target.append(panel);
   loadScopedStyle();
@@ -153,16 +169,93 @@ function mount() {
   const field = name => $('[data-field="' + name + '"]');
   const message = (value, tone = 'info') => {
     const el = $('[data-view="message"]'); el.textContent = value; el.dataset.tone = tone;
+    el.hidden = !value || value === '配置已读取' || value === '准备就绪';
   };
   const header = $('.inline-drawer-header');
   const isOpen = () => $('.inline-drawer-icon').classList.contains('up');
   let loaded = false, loading = false, dirty = false, running = false, checking = null, timer;
   let starting = false, pollingFailed = false, updateLocked = false, backendVersion = '', updateIdentity = null, updateToken = null;
+  let activePage = 'backup', initialPageChosen = false, saving = false, editingRevision = 0;
+  let savedConfig = null, connectionTested = false, lastStatus = null, updateAttention = false;
   let updateNoticeDismissed = false;
+  const tabs = [...panel.querySelectorAll('[data-tab]')];
+  function paintDirty() {
+    $('[data-view="dirty"]').hidden = !dirty;
+    panel.querySelectorAll('[data-action="save"]').forEach(button => { button.disabled = saving || loading; });
+    $('[data-view="connectionState"]').textContent = dirty ? '有未保存修改 · 使用已保存目标' : connectionTested ? '最近目录测试通过' : savedConfig?.url && savedConfig.passwordSet ? '已配置 · 未测试连接' : '请先完成连接设置';
+  }
+  function paintDestination() {
+    let full = '', compact = '尚未配置目标';
+    try {
+      const url = new URL(savedConfig?.url);
+      if (url.protocol !== 'https:') throw new Error('unsupported');
+      // Summaries never expose URL userinfo, query values, or fragments.
+      full = url.origin + url.pathname;
+      const segments = url.pathname.split('/').filter(Boolean);
+      compact = url.host + (segments.length > 1 ? '/…/' : '/') + (segments.at(-1) || '');
+    } catch {}
+    $('[data-view="destination"]').textContent = compact;
+    $('[data-view="destinationFull"]').textContent = full || '请在设置中填写 HTTPS 目录地址。';
+    $('[data-view="cloudDestination"]').textContent = full ? '已保存目录：' + full : '请先在设置中保存连接。';
+    paintDirty();
+  }
+  function paintTaskSummary() {
+    if (!lastStatus) return;
+    const phase = $('[data-view="phase"]').textContent;
+    const bytes = $('[data-view="bytes"]').textContent;
+    const result = lastStatus.sizeVerification ? checkLabels[lastStatus.sizeVerification] : '';
+    $('[data-view="taskSummary"]').textContent = [phase,bytes,result].filter(Boolean).join(' · ');
+    const global = $('[data-view="globalTask"]');
+    const needsAttention = ['failed','interrupted'].includes(lastStatus.phase) || lastStatus.sizeVerification === 'mismatch';
+    global.hidden = activePage === 'task' || (!running && !needsAttention);
+    global.dataset.tone = needsAttention ? 'error' : 'active';
+    $('[data-view="globalTaskText"]').textContent = [phase,bytes].filter(Boolean).join(' · ');
+  }
+  function selectPage(name, {focus = false, remember = true} = {}) {
+    const tab = tabs.find(item => item.dataset.tab === name);
+    if (!tab) return;
+    if (activePage === 'settings' && name !== 'settings') concealPassword();
+    const changed = activePage !== name;
+    const nav = $('.wd-tabs');
+    const wasAbove = changed && nav.getBoundingClientRect().top < 0;
+    activePage = name;
+    if (remember) initialPageChosen = true;
+    tabs.forEach(item => {
+      item.setAttribute('aria-selected',String(item === tab));
+      item.tabIndex = item === tab ? 0 : -1;
+    });
+    panel.querySelectorAll('[data-page]').forEach(page => { page.hidden = page.dataset.page !== name; });
+    paintTaskSummary();
+    $('[data-view="globalUpdate"]').hidden = !updateAttention || name === 'settings';
+    if (focus) tab.focus({preventScroll:true});
+    if (wasAbove) queueMicrotask(() => nav.scrollIntoView?.({block:'nearest',behavior:'auto'}));
+  }
+  $('.wd-tabs').addEventListener('keydown', event => {
+    const tab = event.target.closest('[data-tab]');
+    if (!tab) return;
+    const index = tabs.indexOf(tab);
+    const next = event.key === 'ArrowRight' ? (index + 1) % tabs.length : event.key === 'ArrowLeft' ? (index + tabs.length - 1) % tabs.length : event.key === 'Home' ? 0 : event.key === 'End' ? tabs.length - 1 : null;
+    if (next !== null) {
+      event.preventDefault();
+      tabs.forEach((item,i) => { item.tabIndex = i === next ? 0 : -1; });
+      tabs[next].focus({preventScroll:true});
+    } else if (event.key === 'Enter' || event.key === ' ') {
+      event.preventDefault(); selectPage(tab.dataset.tab,{focus:true});
+    }
+  });
   let updater;
-  updater = mountUpdates({panel,version:VERSION,moduleUrl:import.meta.url,api:hostApi,notify,confirm:confirmUpload,
-    getBusy:() => running || starting || loading || listing || verifying || updateLocked,
+  updater = mountUpdates({panel,container:$('[data-view="updatesMount"]'),version:VERSION,moduleUrl:import.meta.url,api:hostApi,notify,confirm:confirmUpload,
+    getBusy:() => running || starting || loading || saving || listing || verifying || updateLocked,
     getDirty:() => dirty,
+    onUpdateState: state => {
+      $('[data-view="versionSummary"]').textContent = '前端 ' + VERSION + ' · 后端 ' + (state.backendVersion || '未知') + (state.locked ? ' · 待重启或核实' : state.updating ? ' · 更新中' : state.mismatch ? ' · 不匹配' : '');
+      if (state.mismatch || state.locked || state.tone === 'warning') $('[data-view="updatesDetails"]').open = true;
+      updateAttention = state.mismatch || state.locked || state.updating || state.backend === '更新失败' || state.frontend === '更新失败';
+      $('[data-view="globalUpdate"]').hidden = !updateAttention || activePage === 'settings';
+      $('[data-view="globalUpdateText"]').textContent = state.updating ? '更新正在进行…' : state.locked ? '更新待重启或核实' : state.mismatch ? '前后端版本不匹配' : '更新未全部完成';
+      const install = panel.querySelector('[data-update-notice-action="install"]');
+      if (install) install.disabled = state.checking || state.updating || state.locked || !state.canUpdate;
+    },
     onLock:async value => {
       updateLocked = value;
       if (value) {
@@ -234,7 +327,7 @@ function mount() {
   passwordInput.addEventListener('input', passwordChanged);
   passwordInput.addEventListener('change', passwordChanged);
   async function togglePassword() {
-    if (!loaded || loading || document.hidden) return;
+    if (!loaded || loading || document.hidden || activePage !== 'settings') return;
     if (passwordInput.type === 'text') { concealPassword(); return; }
     if (passwordEdited) { passwordInput.type = 'text'; paintPassword(); return; }
     if (!passwordSaved) return;
@@ -245,7 +338,7 @@ function mount() {
     const revision = ++passwordRevision;
     try {
       const result = await api('/password/reveal', {});
-      if (revision !== passwordRevision || passwordEdited || document.hidden || loading) return;
+      if (revision !== passwordRevision || passwordEdited || document.hidden || loading || activePage !== 'settings') return;
       if (typeof result.password !== 'string') throw new Error('invalid password response');
       passwordInput.value = result.password; passwordSentinel = false; passwordInput.type = 'text'; paintPassword();
     } catch {
@@ -285,6 +378,17 @@ function mount() {
     pollingFailed = true;
   }
   let listing = false, verifying = false, configRevision = 0, latestName = '';
+  const CLOUD_PAGE_SIZE = 5;
+  let cloudRows = [], cloudPageIndex = 0;
+  function renderCloudPage() {
+    const pages = Math.max(1,Math.ceil(cloudRows.length / CLOUD_PAGE_SIZE));
+    cloudPageIndex = Math.max(0,Math.min(cloudPageIndex,pages - 1));
+    $('[data-view="cloudList"]').replaceChildren(...cloudRows.slice(cloudPageIndex * CLOUD_PAGE_SIZE,(cloudPageIndex + 1) * CLOUD_PAGE_SIZE));
+    $('[data-view="cloudPager"]').hidden = pages <= 1;
+    $('[data-view="cloudPage"]').textContent = (cloudPageIndex + 1) + ' / ' + pages;
+    $('[data-action="cloud-prev"]').disabled = listing || verifying || cloudPageIndex === 0;
+    $('[data-action="cloud-next"]').disabled = listing || verifying || cloudPageIndex + 1 >= pages;
+  }
   const sizeText = value => typeof value === 'number' && Number.isFinite(value) && value >= 0 ? value.toLocaleString() + ' 字节（' + (value / 1048576).toFixed(2) + ' MiB）' : '未知';
   const checkLabels = {matched:'大小一致（未验证内容）', mismatch:'大小不一致，请勿依赖此备份', unknown:'大小未知，无法确认', observed:'已读取大小，无发送基准，未验证'};
   const cloudMessage = (text, tone = 'info') => {
@@ -292,8 +396,8 @@ function mount() {
   };
   function invalidateCloud() {
     configRevision++;
-    $('[data-view="cloudList"]').replaceChildren();
-    cloudMessage('配置已读取或保存，请手动刷新云端列表');
+    cloudRows = []; cloudPageIndex = 0; renderCloudPage();
+    cloudMessage('尚未读取列表，请手动刷新已保存的目录。');
   }
   function verificationText(result) {
     return [checkLabels[result.sizeVerification] || checkLabels.unknown,
@@ -307,7 +411,7 @@ function mount() {
     listing = true;
     const revision = configRevision;
     cloudMessage('正在读取云端列表…');
-    $('[data-view="cloudList"]').replaceChildren();
+    cloudRows = []; cloudPageIndex = 0; renderCloudPage();
     try {
       const result = await api('/backups');
       if (revision !== configRevision) return;
@@ -322,16 +426,16 @@ function mount() {
         const details = document.createElement('p'); details.className = 'wd-verification'; details.dataset.fileVerification = ''; details.setAttribute('role', 'status'); details.hidden = true;
         row.append(title, metadata, button, details); return row;
       });
-      $('[data-view="cloudList"]').replaceChildren(...rows);
+      cloudRows = rows; cloudPageIndex = 0; renderCloudPage();
       cloudMessage((rows.length ? '已读取 ' + rows.length + ' 个备份文件。' : '当前目录未找到备份文件。') + (result.limited ? '列表已截断，仅显示部分文件。' : ''));
     } catch (e) {
       if (revision === configRevision) cloudMessage(e.message, 'error');
       throw e;
-    } finally { listing = false; }
+    } finally { listing = false; renderCloudPage(); }
   }
   async function verifyFile(name, output) {
     if (listing || verifying) throw new Error('云端请求正在进行，请稍后再试');
-    verifying = true;
+    verifying = true; renderCloudPage();
     const revision = configRevision;
     output.hidden = false; output.dataset.tone = 'info'; output.textContent = '正在检查远端大小…';
     try {
@@ -346,11 +450,12 @@ function mount() {
     } catch (e) {
       if (revision === configRevision) { output.textContent = e.message; output.dataset.tone = 'error'; }
       throw e;
-    } finally { verifying = false; }
+    } finally { verifying = false; renderCloudPage(); }
   }
   function updateSelectionCount() {
     const inputs = [...panel.querySelectorAll('[data-category]')];
     $('[data-view="selectionCount"]').textContent = '已选 ' + inputs.filter(el => el.checked).length + ' / ' + inputs.length;
+    $('[data-view="secretsWarning"]').hidden = !inputs.some(el => el.dataset.category === 'secrets' && el.checked);
   }
   const defaults = {settings:true,secrets:false,characters:true,chats:true,lorebooks:true,presets:true,assets:true,extensions:true,globalExtensions:false,vectors:false};
   const getSelection = () => Object.fromEntries([...panel.querySelectorAll('[data-category]')].map(el => [el.dataset.category,el.checked]));
@@ -366,7 +471,12 @@ function mount() {
     const validBytes = value => typeof value === 'number' && Number.isFinite(value) && value >= 0;
     $('[data-view="bytes"]').textContent = validBytes(s.bytes) ? '已发送 ' + (s.bytes / 1048576).toFixed(2) + ' MiB' : '';
     if (s.phase === 'uploaded' && tone === 'warning') phase.textContent = '上传完成 · 校验异常';
-    const verification = $('[data-view="verification"]'); verification.textContent = [s.sizeVerification ? checkLabels[s.sizeVerification] : '', s.verification, s.error, s.note, s.warning, s.phase === 'uploaded' ? '仅检查大小，未验证 ZIP 内容完整性或能否恢复。' : ''].filter(Boolean).join('\n'); verification.hidden = !verification.textContent; verification.dataset.tone = tone;
+    const verification = $('[data-view="verification"]');
+    const verificationLines = [s.sizeVerification ? checkLabels[s.sizeVerification] : '',s.error,s.note,s.warning];
+    if (s.verification && s.sizeVerification !== 'matched') verificationLines.push(s.verification);
+    if (s.phase === 'uploaded') verificationLines.push('仅检查大小，未验证 ZIP 内容完整性或能否恢复。');
+    verification.textContent = [...new Set(verificationLines.filter(Boolean))].join('\n'); verification.hidden = !verification.textContent; verification.dataset.tone = tone;
+    lastStatus = s; paintTaskSummary();
     const values = [['后端版本', s.version], ['已发送', validBytes(s.bytes) ? s.bytes + ' 字节（交给上传流，不代表远端已校验）' : null], ['远端大小', s.remoteBytes != null ? s.remoteBytes + ' 字节' : null], ['文件', s.name], ['目标', s.destination], ['开始', s.started && new Date(s.started).toLocaleString()], ['结束', s.finished && new Date(s.finished).toLocaleString()]];
     const diagnostic = s.networkDiagnostic;
     if (diagnostic && typeof diagnostic === 'object') {
@@ -400,7 +510,9 @@ function mount() {
   }
   async function load() {
     if (loading) return;
-    concealPassword(); loading = true;
+    concealPassword(); loading = true; paintDirty();
+    panel.querySelectorAll('[data-field]').forEach(input => { input.readOnly = true; });
+    panel.querySelectorAll('[data-category]').forEach(input => { input.disabled = true; });
     try {
     const c = await api('/config');
     if (!c.categories) throw new Error('后端仍为旧版，请更新服务端插件并重启 Luker，再点重新读取配置');
@@ -413,17 +525,30 @@ function mount() {
     const box = $('.wd-categories'); box.replaceChildren();
     for (const [key,name] of Object.entries(c.categories)) {
       const label = document.createElement('label'), input = document.createElement('input');
-      input.type = 'checkbox'; input.dataset.category = key; input.checked = !!c.selection[key];
+      input.type = 'checkbox'; input.dataset.category = key; input.checked = !!c.selection[key]; input.disabled = loading;
       label.append(input,document.createTextNode(name)); box.append(label);
     }
     $('[data-view="configState"]').textContent = '后端 ' + c.version + ' · 存储 ' + c.storageEngine + ' · ' + (c.passwordSet ? '密码已保存，留空不变' : '尚未保存密码');
     $('[data-view="databaseWarning"]').hidden = c.storageEngine === 'fs';
     updateSelectionCount();
-    loaded = true; dirty = false; message(updateLocked ? '更新已下载或结果待核实，请重启后端并重新加载页面。' : '配置已读取'); await refreshStatus();
-    } finally { loading = false; if (loaded) updater.setConfig({version:backendVersion,updateIdentity,updatePending:updateLocked}); }
+    savedConfig = {url:c.url || '',passwordSet:!!c.passwordSet}; connectionTested = false;
+    loaded = true; dirty = false; paintDestination();
+    message(updateLocked ? '更新已下载或结果待核实，请重启后端并重新加载页面。' : '配置已读取'); await refreshStatus();
+    } finally {
+      loading = false; paintDirty();
+      panel.querySelectorAll('[data-field]').forEach(input => { input.readOnly = false; });
+      panel.querySelectorAll('[data-category]').forEach(input => { input.disabled = false; });
+      if (!initialPageChosen) selectPage(running ? 'task' : savedConfig?.url && savedConfig.passwordSet ? 'backup' : 'settings');
+      if (loaded) updater.setConfig({version:backendVersion,updateIdentity,updatePending:updateLocked});
+    }
   }
-  panel.addEventListener('input', () => { dirty = true; message('配置已修改，请保存后再备份'); });
-  panel.addEventListener('change', () => { dirty = true; updateSelectionCount(); message('配置已修改，请保存后再备份'); });
+  const changed = event => {
+    if (!event.target.matches('[data-field], [data-category]')) return;
+    dirty = true; editingRevision++; connectionTested = false;
+    updateSelectionCount(); paintDirty(); message('');
+  };
+  panel.addEventListener('input', changed);
+  panel.addEventListener('change', changed);
   async function confirmUpload(text) {
     let context; try { context = ctx(); } catch { context = {}; }
     if (context.callGenericPopup && context.POPUP_TYPE?.CONFIRM !== undefined) {
@@ -433,6 +558,16 @@ function mount() {
     return globalThis.confirm(text);
   }
   panel.addEventListener('click', async event => {
+    const navigation = event.target.closest('[data-tab], [data-nav]');
+    if (navigation) {
+      event.preventDefault(); selectPage(navigation.dataset.tab || navigation.dataset.nav,{focus:true}); return;
+    }
+    const pager = event.target.closest('[data-action="cloud-prev"], [data-action="cloud-next"]');
+    if (pager) {
+      if (listing || verifying) return;
+      cloudPageIndex += pager.dataset.action === 'cloud-next' ? 1 : -1;
+      renderCloudPage(); return;
+    }
     const noticeButton = event.target.closest('button[data-update-notice-action]');
     if (noticeButton) {
       event.preventDefault();
@@ -440,12 +575,14 @@ function mount() {
         updateNoticeDismissed = true;
         panel.querySelector('.wd-update-notice')?.remove();
       } else if (noticeButton.dataset.updateNoticeAction === 'install') {
+        selectPage('settings'); $('[data-view="updatesDetails"]').open = true;
         await updater.install();
       }
       return;
     }
     const button = event.target.closest('button[data-action]'); if (!button) return;
     const action = button.dataset.action;
+    if (saving && ['save','reload','backup','test'].includes(action)) { message('正在保存，请稍后再试。','warning'); return; }
     button.disabled = true;
     try {
       if (action === 'password-eye') { await togglePassword(); return; }
@@ -468,21 +605,32 @@ function mount() {
         await verifyFile(name, output); return;
       }
       if (!loaded) throw new Error('请先点击重新读取配置，确认后端连接成功');
+      if (loading) throw new Error('正在读取配置，请稍后再操作。');
       if (action === 'all' || action === 'defaults') {
-        setSelection(action === 'all' ? Object.fromEntries(Object.keys(getSelection()).map(k => [k,true])) : defaults); updateSelectionCount(); dirty = true; message('分类已修改，请保存配置'); return;
+        setSelection(action === 'all' ? Object.fromEntries(Object.keys(getSelection()).map(k => [k,true])) : defaults); updateSelectionCount(); dirty = true; editingRevision++; paintDirty(); message(''); return;
       }
       if (action === 'save') {
         const savedPassword = passwordSaved || (passwordEdited && !!passwordInput.value);
         concealPassword();
-        const r = await api('/config',{url:field('url').value,username:field('username').value,password:passwordEdited ? passwordInput.value : '',selection:getSelection()});
-        if (typeof r.url === 'string') field('url').value = r.url;
-        resetPassword(savedPassword); dirty = false; invalidateCloud(); $('[data-view="latestCheck"]').hidden = true;
-        message(r.note || '已保存'); notify(r.note || '配置已保存', 'success', '保存成功'); return;
+        const revision = editingRevision;
+        const payload = {url:field('url').value,username:field('username').value,password:passwordEdited ? passwordInput.value : '',selection:getSelection()};
+        saving = true; paintDirty();
+        const r = await api('/config',payload);
+        const savedUrl = typeof r.url === 'string' ? r.url : payload.url;
+        savedConfig = {url:savedUrl,passwordSet:savedPassword}; connectionTested = false;
+        if (revision === editingRevision) {
+          field('url').value = savedUrl;
+          resetPassword(savedPassword); dirty = false;
+        } else { passwordSaved = savedPassword; paintPassword(); }
+        invalidateCloud(); paintDestination(); $('[data-view="latestCheck"]').hidden = true;
+        message(dirty ? '已保存提交时的配置；后续更改仍待保存。' : r.note || '已保存'); notify(r.note || '配置已保存', 'success', '保存成功'); return;
       }
       if (dirty) throw new Error('表单有未保存修改，请先保存配置');
       if (action === 'test') {
         message('正在检查目录，缺失时将自动创建…');
+        const revision = configRevision, draftRevision = editingRevision;
         const r = await api('/test',{});
+        connectionTested = revision === configRevision && draftRevision === editingRevision; paintDirty();
         message(r.note || '目录访问成功'); notify(r.note || '目录访问成功', 'success', r.created ? '连接成功 · 目录已创建' : '连接成功'); return;
       }
       if (action === 'backup') {
@@ -501,7 +649,7 @@ function mount() {
           const result = await api('/backup',{selection:chosen});
           accepted = true;
           message('备份任务已启动'); notify('准备目录后边生成 ZIP 边上传。完成或异常时会提示，请保持 Luker 后端运行。', 'info', '备份已启动');
-          observeStatus(result, true);
+          observeStatus(result, true); selectPage('task',{focus:true});
         } catch (e) {
           if (accepted) pollingError(e); else throw e;
         } finally { starting = false; schedule(); }
@@ -512,7 +660,7 @@ function mount() {
       const titles = {save:'保存配置失败',test:'连接测试失败',reload:'重新读取失败',backup:'备份请求未确认',status:'状态读取失败',list:'云端列表读取失败',verify:'大小检查失败','verify-latest':'大小检查失败'};
       notify(e.message, 'error', titles[action] || '操作未完成');
     }
-    finally { button.disabled = false; }
+    finally { if (action === 'save') saving = false; button.disabled = false; paintDirty(); }
   });
   // Luker owns drawer clicks/animation. Observe its icon instead of toggling twice.
   new MutationObserver(() => {

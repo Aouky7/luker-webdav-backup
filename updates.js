@@ -51,9 +51,9 @@ async function latestVersion(fetchImpl) {
   } finally { clearTimeout(timer); }
 }
 
-export function mountUpdates({panel,version,moduleUrl,api,notify,confirm,getBusy = () => false,getDirty = () => false,onLock = () => {},onUpdateAvailable = () => {},onUpdateState = () => {},fetchImpl = globalThis.fetch}) {
-  const body = panel.querySelector('.wd-body');
-  if (!body) throw Error('更新面板缺少挂载位置');
+export function mountUpdates({panel,container,version,moduleUrl,api,notify,confirm,getBusy = () => false,getDirty = () => false,onLock = () => {},onUpdateAvailable = () => {},onUpdateState = () => {},fetchImpl = globalThis.fetch}) {
+  const body = container || panel.querySelector('.wd-body');
+  if (!body || !panel.contains(body)) throw Error('更新面板缺少挂载位置');
   const section = panel.ownerDocument.createElement('section');
   section.className = 'wd-section'; section.dataset.updates = '';
   section.innerHTML = '<div class="wd-heading"><h4>版本与更新</h4></div><p class="wd-hint" data-update="versions"></p><p class="wd-message" data-update="mismatch" role="status" hidden></p><p class="wd-message" data-update="result" role="status">读取配置后检查更新</p><div class="wd-buttons"><button type="button" class="menu_button" data-update="check">检查更新</button><button type="button" class="menu_button" data-update="install" disabled>更新前后端</button></div><small class="wd-hint">依次更新服务端插件和前端扩展，不是原子更新。完成后需重启 Luker 后端并重新加载页面；不会自动重启或强制覆盖本地修改。</small>';
@@ -62,17 +62,19 @@ export function mountUpdates({panel,version,moduleUrl,api,notify,confirm,getBusy
   let backendVersion = '', identity = null, hasConfig = false, checked = null, automaticChecked = false;
   let checking = false, updating = false, locked = false, lastCheck = 0;
   const state = {backend:'未执行',frontend:'未执行'};
-  const text = (message,tone = 'info') => { $('result').textContent = message; $('result').dataset.tone = tone; };
+  const emitState = () => onUpdateState({...state,backendVersion,mismatch:!!backendVersion && backendVersion !== version,locked,checking,updating,canUpdate:!!checked,result:$('result').textContent,tone:$('result').dataset.tone || 'info'});
+  const text = (message,tone = 'info') => { $('result').textContent = message; $('result').dataset.tone = tone; emitState(); };
   function versions() {
     $('versions').textContent = `当前运行：前端 ${version} · 后端 ${backendVersion || '未知'}`;
     const mismatch = !!backendVersion && backendVersion !== version;
     $('mismatch').hidden = !mismatch;
     $('mismatch').textContent = mismatch ? '前后端版本不匹配，请更新两端后重启后端并重新加载页面。' : '';
-    $('mismatch').dataset.tone = 'warning';
+    $('mismatch').dataset.tone = 'warning'; emitState();
   }
   function buttons() {
     $('check').disabled = checking || updating || locked;
     $('install').disabled = checking || updating || locked || !checked;
+    emitState();
   }
   function guard() {
     if (locked) throw Error('更新结果待应用或核实，请重启后端并重新加载页面后操作');
@@ -165,6 +167,7 @@ export function mountUpdates({panel,version,moduleUrl,api,notify,confirm,getBusy
     setConfig(config) {
       backendVersion = typeof config?.version === 'string' ? config.version : '';
       identity = config?.updateIdentity ? {...config.updateIdentity} : null;
+      locked = locked || config?.updatePending === true;
       checked = null; versions(); buttons();
       if (!checking && !updating) void check({automatic:true,allowRepeatAutomatic:true});
     },
