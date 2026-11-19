@@ -4,10 +4,8 @@ import {readFileSync} from 'node:fs';
 // Execute the browser module in an isolated DOM. Only import.meta.url is replaced;
 // all event handlers, configuration handling, requests and notifications are real.
 const updateSource = readFileSync(new URL('../updates.js', import.meta.url), 'utf8').replace('export function mountUpdates', 'function mountUpdates');
-const restoreSource = readFileSync(new URL('../restore.js', import.meta.url), 'utf8').replace('export function mountRestore', 'function mountRestore');
-const source = updateSource + '\n' + restoreSource + '\n' + readFileSync(new URL('../frontend.js', import.meta.url), 'utf8')
+const source = updateSource + '\n' + readFileSync(new URL('../frontend.js', import.meta.url), 'utf8')
   .replace("import {mountUpdates} from './updates.js';", '')
-  .replace("import {mountRestore} from './restore.js';", '')
   .replaceAll('import.meta.url', "'https://luker.test/scripts/extensions/third-party/webdav/frontend.js'");
 export const flush = async () => { await new Promise(resolve => setImmediate(resolve)); await new Promise(resolve => setImmediate(resolve)); };
 export const selection = {settings:true,secrets:false,characters:true,chats:true,lorebooks:true,presets:true,assets:true,extensions:true,globalExtensions:false,vectors:false};
@@ -17,10 +15,10 @@ export function harness(t, {toasts = true, popups = true, oldBackend = false, co
   t.after(() => dom.window.close());
   const w = dom.window;
   Object.assign(w,{AbortController,TextDecoder,TextEncoder,Uint8Array});
-  const config = {version:oldBackend ? '0.4.0' : '0.5.7',url:'https://dav.jianguoyun.com/dav/',username:'test',passwordSet:true,storageEngine:'fs',selection:{...selection},categories:Object.fromEntries(Object.keys(selection).map(key => [key,key]))};
-  if (!oldBackend) Object.assign(config, {supportedUploadModes:['stream'],uploadMode:'stream',capabilities:{passwordReveal:true,cloudRestore:true},updateIdentity:{directory:'backend-folder',repository:'https://github.com/Aouky7/webdav_luker'}});
+  const config = {version:oldBackend ? '0.4.0' : '0.5.8',url:'https://dav.jianguoyun.com/dav/',username:'test',passwordSet:true,storageEngine:'fs',selection:{...selection},categories:Object.fromEntries(Object.keys(selection).map(key => [key,key]))};
+  if (!oldBackend) Object.assign(config, {supportedUploadModes:['stream'],uploadMode:'stream',capabilities:{passwordReveal:true},updateIdentity:{directory:'backend-folder',repository:'https://github.com/Aouky7/webdav_luker'}});
   Object.assign(config,configOverrides);
-  const h = {secret:'synthetic-application-password',dom,w,config,calls:[],notices:[],popups:[],alerts:[],confirmations:[],allow:false,fail:{},tasks:new Map(),nextTimer:100000,backupCount:0,latestVersion:'0.5.7',cloudFiles,holdLoadConfig,configGetCount:0};
+  const h = {secret:'synthetic-application-password',dom,w,config,calls:[],notices:[],popups:[],alerts:[],confirmations:[],allow:false,fail:{},tasks:new Map(),nextTimer:100000,backupCount:0,latestVersion:'0.5.8',cloudFiles,holdLoadConfig,configGetCount:0};
   h.status = statusOverride || {version:config.version,phase:'uploaded',busy:false,name:'old.zip',started:'2025-01-01',destination:config.url,bytes:100,remoteBytes:100,sizeVerification:'matched'};
   h.$ = selector => w.document.querySelector(selector);
   h.field = name => h.$(`[data-field="${name}"]`);

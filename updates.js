@@ -56,13 +56,25 @@ export function mountUpdates({panel,container,version,moduleUrl,api,notify,confi
   if (!body || !panel.contains(body)) throw Error('更新面板缺少挂载位置');
   const section = panel.ownerDocument.createElement('section');
   section.className = 'wd-section'; section.dataset.updates = '';
-  section.innerHTML = '<div class="wd-heading"><h4>版本与更新</h4></div><p class="wd-hint" data-update="versions"></p><p class="wd-message" data-update="mismatch" role="status" hidden></p><p class="wd-message" data-update="result" role="status">读取配置后检查更新</p><div class="wd-buttons"><button type="button" class="menu_button" data-update="check">检查更新</button><button type="button" class="menu_button" data-update="install" disabled>更新前后端</button></div><small class="wd-hint">依次更新服务端插件和前端扩展，不是原子更新。完成后需重启 Luker 后端并重新加载页面；不会自动重启或强制覆盖本地修改。</small>';
+  section.innerHTML = '<div class="wd-heading"><h4>版本与更新</h4></div><p class="wd-hint" data-update="versions"></p><p class="wd-message" data-update="mismatch" role="status" hidden></p><p class="wd-message" data-update="result" role="status">读取配置后检查更新</p><div class="wd-update-progress" data-update="progress-container" role="status" hidden><progress data-update="progress" max="3" aria-label="更新进度"></progress><span data-update="progress-label" aria-live="polite"></span></div><div class="wd-buttons"><button type="button" class="menu_button" data-update="check">检查更新</button><button type="button" class="menu_button" data-update="install" disabled>更新前后端</button></div><small class="wd-hint">依次更新服务端插件和前端扩展，不是原子更新。完成后需重启 Luker 后端并重新加载页面；不会自动重启或强制覆盖本地修改。</small>';
   body.append(section);
   const $ = name => section.querySelector('[data-update="' + name + '"]');
   let backendVersion = '', identity = null, hasConfig = false, checked = null, automaticChecked = false;
-  let checking = false, updating = false, locked = false, lastCheck = 0;
+  let checking = false, updating = false, locked = false, lastCheck = 0, confirmedThisInstance = false;
   const state = {backend:'未执行',frontend:'未执行'};
-  const emitState = () => onUpdateState({...state,backendVersion,mismatch:!!backendVersion && backendVersion !== version,locked,checking,updating,canUpdate:!!checked,result:$('result').textContent,tone:$('result').dataset.tone || 'info'});
+  const progressState = {visible:false,phase:'idle',completed:0,total:3,indeterminate:false,label:'',status:'idle'};
+  const emitState = () => onUpdateState({...state,progress:{...progressState},backendVersion,mismatch:!!backendVersion && backendVersion !== version,locked,checking,updating,canUpdate:!!checked,result:$('result').textContent,tone:$('result').dataset.tone || 'info'});
+  function progress(next) {
+    Object.assign(progressState,next);
+    const bar = $('progress'), container = $('progress-container');
+    container.hidden = !progressState.visible;
+    $('progress-label').textContent = progressState.label;
+    bar.max = progressState.total;
+    if (progressState.indeterminate) bar.removeAttribute('value');
+    else bar.setAttribute('value',String(progressState.completed));
+    bar.setAttribute('aria-valuetext',progressState.label);
+    emitState();
+  }
   const text = (message,tone = 'info') => { $('result').textContent = message; $('result').dataset.tone = tone; emitState(); };
   function versions() {
     $('versions').textContent = `当前运行：前端 ${version} · 后端 ${backendVersion || '未知'}`;
@@ -122,26 +134,44 @@ export function mountUpdates({panel,container,version,moduleUrl,api,notify,confi
   }
   async function install() {
     if (checking || updating || locked) return;
-    updating = true; buttons(); let touched = false;
+    updating = true; buttons(); let touched = false, mutationStage = '';
+    state.backend = '未执行'; state.frontend = '未执行';
+    progress({visible:true,phase:'preflight',completed:0,total:3,indeterminate:false,label:'准备更新（0/3）',status:'active'});
     try {
       guard();
+      progress({visible:true,phase:'source',completed:0,total:3,indeterminate:true,label:'正在重新核实前后端安装来源（0/3）',status:'active'});
       const target = await identify(); // Revalidate exact directories and remotes for every mutation.
       guard();
-      if (!await confirm('将依次更新当前 WebDAV 服务端插件与前端扩展。\n仓库：' + REPOSITORY + '\n服务端目录：' + target.directory + '\n前端目录：' + target.frontend.extensionName + '\n\n任一步骤失败会停止；完成后请手动重启后端并重新加载页面。是否继续？')) return;
+      progress({visible:true,phase:'confirmation',completed:1,total:3,indeterminate:false,label:'已核实前后端安装来源（1/3），等待用户确认',status:'active'});
+      if (!await confirm('将依次更新当前 WebDAV 服务端插件与前端扩展。\n仓库：' + REPOSITORY + '\n服务端目录：' + target.directory + '\n前端目录：' + target.frontend.extensionName + '\n\n任一步骤失败会停止；完成后请手动重启后端并重新加载页面。是否继续？')) {
+        progress({visible:false,phase:'cancelled',completed:1,total:3,indeterminate:false,label:'更新已取消',status:'cancelled'});
+        return;
+      }
       state.backend = '未执行'; state.frontend = '未执行';
-      guard(); touched = true; await onLock(true);
+      guard(); touched = true;
+      progress({visible:true,phase:'lock',completed:1,total:3,indeterminate:true,label:'正在启用更新保护（1/3）',status:'active'});
+      mutationStage = 'lock';
+      await onLock(true);
+      mutationStage = '';
       state.backend = '正在更新'; text('正在更新服务端插件…');
+      progress({visible:true,phase:'backend',completed:1,total:3,indeterminate:true,label:'正在更新服务端插件（1/3）',status:'active'});
+      mutationStage = 'backend';
       const backend = await api('/api/users/plugins/update',{directory:target.directory});
       if (backend?.ok !== true || backend.plugin?.directory !== target.directory || !sameRepository(backend.plugin?.remoteUrl)) {
         throw Object.assign(Error('服务端更新响应无法核实，结果未确认'),{uncertain:true});
       }
+      mutationStage = '';
       state.backend = '已下载，待重启'; state.frontend = '正在更新';
+      progress({visible:true,phase:'frontend',completed:2,total:3,indeterminate:true,label:'正在更新前端扩展（2/3）',status:'active'});
       text('服务端更新已下载，正在更新前端扩展…');
+      mutationStage = 'frontend';
       const frontend = await api('/api/extensions/update',{...target.frontend,force:false});
       if (!frontend || typeof frontend.shortCommitHash !== 'string' || !sameRepository(frontend.remoteUrl)) {
         const error = Error('前端更新响应无法核实，结果未确认'); error.uncertain = true; throw error;
       }
-      state.frontend = '已下载，待重新加载'; locked = true;
+      mutationStage = '';
+      state.frontend = '已下载，待重新加载'; locked = true; confirmedThisInstance = true;
+      progress({visible:true,phase:'pending',completed:3,total:3,indeterminate:false,label:'更新已下载，待重启后端并重新加载页面',status:'success'});
       text('前后端更新请求均已成功。当前运行版本尚未改变；请重启 Luker 后端，再重新加载页面。','info');
       notify('更新已下载，请重启后端并重新加载页面。','success','更新完成 · 待应用');
     } catch (error) {
@@ -151,8 +181,25 @@ export function mountUpdates({panel,container,version,moduleUrl,api,notify,confi
       // A partial update must not replay the first write on the next button click.
       locked = touched && (uncertain || state.backend === '已下载，待重启');
       const result = `服务端：${state.backend}；前端：${state.frontend}。`;
-      text(result + '\n' + String(error?.message || error) + (locked ? '\n请在宿主管理中核实结果，重启后端并重新加载页面；不会自动重试。' : ''),'warning');
-      notify(result + ' ' + String(error?.message || error),'warning','更新未全部完成');
+      const message = String(error?.message || error);
+      let phase = 'error', status = 'error', label;
+      if (!touched) {
+        phase = progressState.phase === 'source' ? 'source-error' : 'preflight-error';
+        label = progressState.phase === 'source' ? `安装来源核验失败（${progressState.completed}/3）` : `更新未开始（${progressState.completed}/3）`;
+      } else if (mutationStage === 'lock') {
+        phase = uncertain ? 'uncertain-lock' : 'lock-error';
+        if (uncertain) { status = 'warning'; label = `更新保护结果未确认，未发送更新请求（${progressState.completed}/3）；请核实，禁止自动重试`; }
+        else label = `启用更新保护失败，尚未发起更新（${progressState.completed}/3）`;
+      } else if (locked) {
+        phase = uncertain ? 'uncertain' : 'partial'; status = 'warning';
+        if (uncertain) label = `${mutationStage === 'backend' ? '服务端' : '前端'}更新结果未确认（${progressState.completed}/3）；请核实，禁止自动重试`;
+        else label = `后端已更新，前端更新失败（${progressState.completed}/3）；请核实，禁止自动重试`;
+      } else {
+        label = `${mutationStage === 'backend' ? '服务端' : '前端'}更新失败（${progressState.completed}/3）`;
+      }
+      progress({visible:true,phase,completed:progressState.completed,total:3,indeterminate:false,label,status});
+      text(result + '\n' + message + (locked ? '\n请在宿主管理中核实结果，重启后端并重新加载页面；不会自动重试。' : ''),'warning');
+      notify(result + ' ' + message,'warning','更新未全部完成');
     } finally {
       updating = false;
       if (touched && !locked) await onLock(false);
@@ -166,12 +213,19 @@ export function mountUpdates({panel,container,version,moduleUrl,api,notify,confi
     setBackendVersion(value) { backendVersion = typeof value === 'string' ? value : ''; versions(); },
     setConfig(config) {
       backendVersion = typeof config?.version === 'string' ? config.version : '';
-      identity = config?.updateIdentity ? {...config.updateIdentity} : null;
+      const nextIdentity = config?.updateIdentity ? {...config.updateIdentity} : null;
+      const sameIdentity = !!identity && !!nextIdentity && identity.directory === nextIdentity.directory && identity.repository === nextIdentity.repository;
+      identity = nextIdentity;
       locked = locked || config?.updatePending === true;
-      checked = null; versions(); buttons();
+      if (config?.updatePending === true && !confirmedThisInstance) {
+        const completed = Math.min(progressState.completed,2);
+        progress({visible:true,phase:'pending-verification',completed,total:3,indeterminate:false,label:`检测到待应用更新；已确认阶段 ${completed}/3，需重启并重新加载核实`,status:'warning'});
+      }
+      if (!sameIdentity) checked = null;
+      versions(); buttons();
       if (!checking && !updating) void check({automatic:true,allowRepeatAutomatic:true});
     },
     check,install,
-    getState:() => ({...state,locked,checking,updating}),
+    getState:() => ({...state,locked,checking,updating,progress:{...progressState}}),
   };
 }

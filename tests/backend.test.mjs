@@ -56,12 +56,8 @@ test('router uses bounded XML requests, persists recheck, rejects unsafe names a
   const count=calls.length;
   for(const invalid of ['../secret.zip','https://evil.example/test.zip','bad.zip',name+'.partial']) assert.equal((await invoke('POST /verify',{name:invalid})).code,400);
   assert.equal(calls.length,count);
-  const prepared=await invoke('POST /restore/prepare',{name});assert.equal(prepared.code,200);assert.equal(prepared.payload.bytes,4096);
-   const restoreConfig=(await invoke('GET /config')).payload;assert.equal(restoreConfig.capabilities.cloudRestore,true);assert.equal(restoreConfig.restorePending,true);assert.equal(restoreConfig.restoreState.token,undefined);
-   for(const route of ['POST /backup','POST /config','POST /test','POST /updates/lock'])assert.equal((await invoke(route,{})).code,409,'restore lock must block '+route);
-   assert.equal((await invoke('POST /restore/commit',{token:prepared.payload.token})).code,409,'staging is required before commit');
-   assert.equal((await invoke('POST /restore/release',{token:prepared.payload.token})).code,200);
-   assert.equal((await invoke('GET /config')).payload.restorePending,false);
+  for(const suffix of ['prepare','source','commit','release'])assert.equal(routes.has('POST /restore/'+suffix),false);
+   const readOnly=(await invoke('GET /config')).payload;assert.equal(readOnly.capabilities.cloudRestore,undefined);assert.equal(readOnly.restorePending,undefined);
    oversized=true;const tooLarge=await invoke('GET /backups');assert.equal(tooLarge.code,400);assert.ok(tooLarge.payload.error.includes('2 MiB'));
  } finally {
   https.request=originalRequest;
